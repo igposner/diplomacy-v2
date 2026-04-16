@@ -3,7 +3,7 @@ from .base_bot import BaseBot
 
 
 class GreedyBot(BaseBot):
-    def decide_orders(self, game) -> list[str]:
+    async def decide_orders(self, game, message_history: list = None) -> list[str]:
         phase = str(game.phase)
         # Phase format: "SPRING 1901 MOVEMENT" / "FALL 1901 RETREATS" / "WINTER 1901 ADJUSTMENTS"
         if 'ADJUSTMENT' in phase:

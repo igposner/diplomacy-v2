@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 class CreateGameRequest(BaseModel):
     human_power: str
+    ai_power: str | None = None
 
 class CreateGameResponse(BaseModel):
     game_id: str
@@ -23,8 +24,12 @@ class AdvancePhaseMessage(BaseModel):
 class GetStateMessage(BaseModel):
     type: Literal["get_state"]
 
+class SendMessageMessage(BaseModel):
+    type: Literal["send_message"]
+    text: str
+
 ClientMessage = Annotated[
-    Union[SubmitOrdersMessage, AdvancePhaseMessage, GetStateMessage],
+    Union[SubmitOrdersMessage, AdvancePhaseMessage, GetStateMessage, SendMessageMessage],
     Field(discriminator="type"),
 ]
 
@@ -44,7 +49,7 @@ class GameOverMessage(BaseModel):
     winners: list[str]
 
 
-# --- Legacy stubs (kept for forward compatibility) ---
+# --- Legacy stubs ---
 
 class HealthResponse(BaseModel):
     status: str

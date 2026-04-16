@@ -6,5 +6,5 @@ class BaseBot(ABC):
         self.power_name = power_name
 
     @abstractmethod
-    def decide_orders(self, game) -> list[str]:
+    async def decide_orders(self, game, message_history: list = None) -> list[str]:
         """Return a list of order strings for this power given the current game state."""

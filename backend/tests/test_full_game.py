@@ -2,6 +2,7 @@
 End-to-end test: 7 GreedyBots play a full game (FRANCE slot simulated by GreedyBot).
 Runs until game over or all of 1910 resolves, then writes tests/game_output.json.
 """
+import asyncio
 import sys
 import os
 import json
@@ -18,7 +19,7 @@ def _year(phase_str: str) -> int:
     return int(phase_str.split()[1])
 
 
-def main():
+async def main():
     manager = GameManager(human_power='FRANCE')
     france_bot = GreedyBot('FRANCE')
 
@@ -28,9 +29,9 @@ def main():
         phase = str(manager.game.phase)
         print(f"  [{phases_processed:>3}] {phase}")
 
-        human_orders = france_bot.decide_orders(manager.game)
+        human_orders = await france_bot.decide_orders(manager.game)
         manager.submit_human_orders(human_orders)
-        manager.advance_phase()
+        await manager.advance_phase()
         phases_processed += 1
 
         if manager.game.is_game_done:
@@ -54,4 +55,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())

@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from importlib.metadata import version as pkg_version
 from pydantic import TypeAdapter, ValidationError
@@ -15,7 +18,7 @@ from schemas import (
 app = FastAPI(title="Diplomacy API")
 ws_manager = ConnectionManager()
 
-_VALID_POWERS = {'AUSTRIA', 'ENGLAND', 'FRANCE', 'GERMANY', 'ITALY', 'RUSSIA', 'TURKEY'}
+_VALID_POWERS = {"AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"}
 _client_msg_adapter: TypeAdapter[ClientMessage] = TypeAdapter(ClientMessage)
 
 
@@ -28,12 +31,21 @@ async def health():
     return {"status": "ok", "diplomacy_version": diplomacy_version}
 
 
-@app.post("/api/games", response_model=dict)
+@app.post("/api/games")
 async def create_game_endpoint(body: CreateGameRequest):
-    power = body.human_power.upper()
-    if power not in _VALID_POWERS:
-        raise HTTPException(status_code=400, detail=f"Invalid power name: {body.human_power!r}")
-    game_id = create_game(power)
+    human = body.human_power.upper()
+    if human not in _VALID_POWERS:
+        raise HTTPException(status_code=400, detail=f"Invalid human_power: {body.human_power!r}")
+
+    ai = None
+    if body.ai_power:
+        ai = body.ai_power.upper()
+        if ai not in _VALID_POWERS:
+            raise HTTPException(status_code=400, detail=f"Invalid ai_power: {body.ai_power!r}")
+        if ai == human:
+            raise HTTPException(status_code=400, detail="human_power and ai_power must be different")
+
+    game_id = create_game(human, ai)
     return {"game_id": game_id}
 
 
@@ -93,7 +105,7 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                     )
 
             elif msg.type == "advance_phase":
-                gm.advance_phase()
+                await gm.advance_phase()
                 await ws_manager.send_to(
                     websocket, StateMessage(data=gm.state_for_frontend()).model_dump()
                 )
@@ -102,6 +114,13 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str):
                         websocket,
                         GameOverMessage(winners=_get_winners(gm.game)).model_dump(),
                     )
+
+            elif msg.type == "send_message":
+                reply = await gm.send_message_to_ai(msg.text)
+                await ws_manager.send_to(
+                    websocket,
+                    {"type": "message", "from": "AI", "text": reply},
+                )
 
     except WebSocketDisconnect:
         ws_manager.disconnect(game_id)
