@@ -1,3 +1,4 @@
+import uuid
 import diplomacy
 from bots.greedy_bot import GreedyBot
 
@@ -41,3 +42,18 @@ class GameManager:
             'orderable': orderable,
             'possible_orders': possible_orders,
         }
+
+
+# --- Game registry ---
+
+GAMES: dict[str, GameManager] = {}
+
+
+def create_game(human_power: str) -> str:
+    game_id = uuid.uuid4().hex[:8]
+    GAMES[game_id] = GameManager(human_power)
+    return game_id
+
+
+def get_game(game_id: str) -> GameManager | None:
+    return GAMES.get(game_id)
