@@ -9,3 +9,5 @@ echo "--- full game, 7 scripted bots ---"
 ./venv/bin/python tests/test_smoke.py
 echo "--- persistence across restarts ---"
 ./venv/bin/python tests/test_persistence.py
+echo "--- solo victory ends the game ---"
+./venv/bin/python tests/test_victory.py

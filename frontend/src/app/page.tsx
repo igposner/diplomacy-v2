@@ -54,14 +54,21 @@ export default function Lobby() {
       try {
         let id: string | null = null;
         try { id = localStorage.getItem("diplomacy.game"); } catch { id = null; }
-        if (!id) {
+        const finished = async (gid: string) => {
+          const r = await fetch(`${API}/api/games/${gid}/state`);
+          if (!r.ok) return null;
+          const s = await r.json();
+          return s.done ? null : s;   // a finished game is not worth returning to
+        };
+        let s = id ? await finished(id) : null;
+        if (!s) {
           const all = await fetch(`${API}/api/games`).then((r) => r.json());
-          if (Array.isArray(all) && all.length) id = all[0].id;
+          for (const g of Array.isArray(all) ? all : []) {
+            s = await finished(g.id);
+            if (s) { id = g.id; break; }
+          }
         }
-        if (!id) return;
-        const r = await fetch(`${API}/api/games/${id}/state`);
-        if (!r.ok) return;
-        const s = await r.json();
+        if (!s || !id) return;
         setResume({ id, phase: s.phase, power: s.humanPower });
       } catch { /* the lobby still works without a game to resume */ }
     })();

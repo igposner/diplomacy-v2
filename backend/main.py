@@ -115,6 +115,8 @@ async def state(game_id: str, power: str | None = None):
 @app.post("/api/games/{game_id}/orders")
 async def orders(game_id: str, body: Orders):
     f = get(game_id)
+    if f.done:
+        return _finished(f)
     power = body.power.upper()
     bad = f.validate(power, body.orders)
     if bad:
@@ -124,10 +126,17 @@ async def orders(game_id: str, body: Orders):
     return {"accepted": body.orders}
 
 
+def _finished(f: Facade) -> dict:
+    return {"phase": f.phase, "next": f.phase, "centerChanges": {}, "dislodged": {},
+            "orders": [], "outcome": f.outcome}
+
+
 async def _resolve(game_id: str, f: Facade, human: str | None) -> dict:
     """Fill in the other powers and process. NEVER the human's seat: their
     unordered units hold, which is the rule. Ordering them for them was a bug --
     pressing resolve used to have a bot play your pieces."""
+    if f.done:
+        return _finished(f)
     bots = {p: GreedyBot(p) for p in POWERS if p != human}
     for p, bot in bots.items():
         if f.legal_orders(p) and not f.game.powers[p].orders:
@@ -135,7 +144,7 @@ async def _resolve(game_id: str, f: Facade, human: str | None) -> dict:
     r = f.process()
     payload = result_json(r)
     storage.save_game(game_id, f.game, payload)
-    return {**payload, "next": f.phase}
+    return {**payload, "next": f.phase, "outcome": f.outcome}
 
 
 @app.post("/api/games/{game_id}/submit")
@@ -143,6 +152,8 @@ async def submit(game_id: str, body: Orders):
     """One action, as at a real table: hand in your orders and the turn goes
     through. Everything resolves at once; anything you left unordered holds."""
     f = get(game_id)
+    if f.done:
+        return _finished(f)
     power = body.power.upper()
     bad = f.validate(power, body.orders)
     if bad:

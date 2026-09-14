@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Board, { type BoardState } from "@/components/Board";
 import OrdersPanel from "@/components/OrdersPanel";
 import PressPanel, { type Press } from "@/components/PressPanel";
+import EndScreen, { type Outcome } from "@/components/EndScreen";
 import type { PhaseResult } from "@/lib/results";
 import { chips, click, hint, indexLegal, modes, targets, type Entry } from "@/lib/orderEntry";
 import { BORDER_INK, FILL, LABEL_INK, PARCHMENT, PARCHMENT_DARK, TOKEN, type Power } from "@/lib/map";
@@ -19,6 +20,7 @@ interface State extends BoardState {
   phase: string; phaseType: string; done: boolean;
   orderable?: string[]; legalOrders?: Record<string, string[]>;
   lastResult?: PhaseResult | null;
+  outcome?: Outcome | null;
 }
 
 export default function GamePage() {
@@ -255,6 +257,8 @@ export default function GamePage() {
           )}
         </div>
       </div>
+
+      {state?.outcome && me && <EndScreen outcome={state.outcome} me={me} />}
 
       <aside style={{
         width: 380, flex: "none", display: "flex", flexDirection: "column", gap: 10,
