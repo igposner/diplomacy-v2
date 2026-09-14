@@ -1,296 +1,243 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Board, { type BoardState } from "@/components/Board";
-import OrdersPanel from "@/components/OrdersPanel";
-import PressPanel, { type Press } from "@/components/PressPanel";
-import ResultsPanel, { type PhaseResult } from "@/components/ResultsPanel";
-import { chips, click, hint, indexLegal, targets, type Entry } from "@/lib/orderEntry";
-import { BORDER_INK, FILL, LABEL_INK, PARCHMENT, PARCHMENT_DARK, TOKEN, type Power } from "@/lib/map";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import CompassRose from "@/components/CompassRose";
+import { BORDER_INK, LABEL_INK, PARCHMENT, PARCHMENT_DARK, TOKEN, type Power } from "@/lib/map";
+import { CHARACTER, POWERS, homes } from "@/lib/powers";
 
 const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
-const ME: Power = "FRANCE";
-const ORDER: Power[] = ["ENGLAND", "FRANCE", "GERMANY", "ITALY", "AUSTRIA", "RUSSIA", "TURKEY"];
-const base = (p: string) => p.split("/")[0];
-const unitOf = (order: string) => order.split(" ")[1];
+const INK = "#3b3428";
 
-interface State extends BoardState {
-  phase: string; phaseType: string; done: boolean;
-  orderable?: string[]; legalOrders?: Record<string, string[]>;
-  lastResult?: PhaseResult | null;
+/* Rhumb lines: the radiating web on a portolan chart, struck from points on a
+   hidden circle. Sixteen from each of three nodes, as the originals were drawn. */
+function Rhumbs() {
+  const nodes: [number, number][] = [[500, 330], [1180, 250], [820, 700]];
+  const lines: React.ReactNode[] = [];
+  nodes.forEach(([cx, cy], n) =>
+    Array.from({ length: 16 }, (_, i) => {
+      const a = (i * 22.5) * (Math.PI / 180);
+      lines.push(
+        <line key={`${n}-${i}`} x1={cx} y1={cy}
+              x2={Number((cx + Math.cos(a) * 1700).toFixed(2))}
+              y2={Number((cy + Math.sin(a) * 1700).toFixed(2))}
+              stroke={i % 4 === 0 ? "#8a6414" : "#4a6b7c"}
+              strokeWidth={i % 4 === 0 ? 0.8 : 0.5} strokeOpacity={0.17} />
+      );
+    })
+  );
+  return <>{lines}</>;
 }
 
-export default function Page() {
-  const [gameId, setGameId] = useState<string | null>(null);
-  const [state, setState] = useState<State | null>(null);
-  const [press, setPress] = useState<Press[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [entry, setEntry] = useState<Entry>({ kind: "idle" });
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [note, setNote] = useState<string | null>(null);
-  const [resumed, setResumed] = useState(false);
-  // Failure marks are a report on the last turn, not part of the live board.
-  const [review, setReview] = useState(false);
-  const consumed = useRef(false);
-
-  const ix = useMemo(
-    () => (state?.legalOrders ? indexLegal(state.legalOrders) : null),
-    [state?.legalOrders]
+/* A sea serpent, the way a chart-maker fills empty ocean. */
+function Serpent() {
+  return (
+    <g stroke={INK} strokeOpacity={0.3} fill="none" strokeWidth={2.2} strokeLinecap="round">
+      <path d="M40 120 q34 -40 70 -6 q34 34 70 0 q34 -34 70 0 q30 30 62 6" />
+      <path d="M40 120 q-14 -20 4 -34 q22 -16 40 2 q10 10 2 22" />
+      <circle cx="58" cy="92" r="3.2" fill={INK} fillOpacity={0.45} stroke="none" />
+      <path d="M96 96 l10 -20 M124 100 l6 -22 M152 96 l10 -20" strokeWidth={1.6} />
+      <path d="M282 120 q18 14 34 4 q-6 18 -24 14" />
+    </g>
   );
-  const highlights = useMemo(() => (ix ? targets(ix, entry) : new Set<string>()), [ix, entry]);
+}
 
-  const load = useCallback(async (id: string) => {
-    const [s, m] = await Promise.all([
-      fetch(`${API}/api/games/${id}/state?power=${ME}`).then((r) => r.json()),
-      fetch(`${API}/api/games/${id}/messages?power=${ME}`).then((r) => r.json()),
-    ]);
-    setState(s); setPress(m); setEntry({ kind: "idle" });
-  }, []);
+export default function Lobby() {
+  const router = useRouter();
+  const [pick, setPick] = useState<Power | null>(null);
+  const [spinning, setSpinning] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [resume, setResume] = useState<{ id: string; phase: string; power: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const start = useCallback(async () => {
-    const r = await fetch(`${API}/api/games`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ power: ME, advance: 6 }),
-    });
-    if (!r.ok) throw new Error(`create ${r.status}`);
-    const { game_id } = await r.json();
-    try { localStorage.setItem("diplomacy.game", game_id); } catch { /* private window */ }
-    setGameId(game_id);
-    await load(game_id);
-  }, [load]);
-
-  /* Resume rather than start over: the game you were in, else the most recent
-     one on the server, and only create a new one when there is nothing to resume. */
   useEffect(() => {
     (async () => {
       try {
         let id: string | null = null;
         try { id = localStorage.getItem("diplomacy.game"); } catch { id = null; }
-        if (id && (await fetch(`${API}/api/games/${id}/state`)).ok) {
-          setGameId(id); setResumed(true); await load(id); return;
+        if (!id) {
+          const all = await fetch(`${API}/api/games`).then((r) => r.json());
+          if (Array.isArray(all) && all.length) id = all[0].id;
         }
-        const existing = await fetch(`${API}/api/games`).then((r) => r.json());
-        if (Array.isArray(existing) && existing.length) {
-          const newest = existing[0].id;
-          try { localStorage.setItem("diplomacy.game", newest); } catch { /* ignore */ }
-          setGameId(newest); setResumed(true); await load(newest); return;
-        }
-        await start();
-      } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+        if (!id) return;
+        const r = await fetch(`${API}/api/games/${id}/state`);
+        if (!r.ok) return;
+        const s = await r.json();
+        setResume({ id, phase: s.phase, power: s.humanPower });
+      } catch { /* the lobby still works without a game to resume */ }
     })();
-  }, [load, start]);
+  }, []);
 
-  // A new phase means a new set of units to order.
-  useEffect(() => { setDraft({}); setNote(null); }, [state?.phase]);
+  const random = useCallback(() => {
+    setSpinning(true);
+    const next = POWERS[Math.floor(Math.random() * POWERS.length)];
+    setPick(next);
+    setTimeout(() => setSpinning(false), 1200);
+  }, []);
 
-  /* Keyboard, as on Backstabbr: S starts a support, C a convoy, Esc cancels. */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) return;
-      if (e.key === "Escape") return setEntry({ kind: "idle" });
-      if (entry.kind !== "unit" || !ix) return;
-      if (e.key.toLowerCase() === "s" && (ix.supportHold.has(entry.loc) || ix.supportMove.has(entry.loc)))
-        setEntry({ kind: "supportPick", loc: entry.loc });
-      if (e.key.toLowerCase() === "c" && ix.convoy.has(entry.loc))
-        setEntry({ kind: "convoyPick", loc: entry.loc });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [entry, ix]);
-
-  const record = (order: string) =>
-    setDraft((d) => ({
-      // WAIVE names no unit, so give each one its own slot.
-      ...d,
-      [order === "WAIVE" ? `WAIVE-${Object.keys(d).length}` : unitOf(order)]: order,
-    }));
-
-  /* Press on a unit selects it, so releasing over another province is a drag-move.
-     A separate click on an already-selected unit is what orders a hold. */
-  const onProvince = (p: string, phase: "down" | "up") => {
-    if (!ix) return;
-    if (review) setReview(false);   // you are playing now, not reviewing
-    if (phase === "down") {
-      consumed.current = false;
-      // Pre-select on press so a drag becomes a move, but only where pressing
-      // would select a unit. A buildable centre must reach its own prompt.
-      if (entry.kind === "idle") {
-        const peek = click(ix, entry, p);
-        if (peek.next.kind === "unit" && !peek.order) {
-          setEntry(peek.next);
-          consumed.current = true;
-        }
-      }
-      return;
-    }
-    if (consumed.current) { consumed.current = false; return; }
-    const step = click(ix, entry, p);
-    if (step.order) record(step.order);
-    setEntry(step.next);
-  };
-
-  const submit = async () => {
-    if (!gameId) return;
-    const orders = Object.values(draft);
-    const r = await fetch(`${API}/api/games/${gameId}/orders`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ power: ME, orders }),
-    });
-    if (r.ok) { setNote(`${orders.length} order${orders.length === 1 ? "" : "s"} accepted`); return; }
-    const d = await r.json().catch(() => null);
-    setNote(`rejected: ${d?.detail?.orders?.join(", ") ?? r.status}`);
-  };
-
-  const advance = async () => {
-    if (!gameId) return;
+  const begin = async () => {
+    if (!pick) return;
     setBusy(true);
     try {
-      await fetch(`${API}/api/games/${gameId}/process`, { method: "POST" });
-      await load(gameId);
-      setReview(true);   // show what just happened, until you touch the board
-    } finally { setBusy(false); }
+      const r = await fetch(`${API}/api/games`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ power: pick, advance: 0 }),
+      });
+      if (!r.ok) throw new Error(`could not begin (${r.status})`);
+      const { game_id } = await r.json();
+      try { localStorage.setItem("diplomacy.game", game_id); } catch { /* ignore */ }
+      router.push(`/game/${game_id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
   };
 
-  const sendPress = async (to: string, text: string) => {
-    if (!gameId) return;
-    await fetch(`${API}/api/games/${gameId}/messages`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sender: ME, to, text }),
-    });
-    await load(gameId);
-  };
-
-  const sc = (p: Power) => state?.powers[p]?.centers.length ?? 0;
-  const title = state
-    ? state.phase.split(" ").slice(0, 2).map((w) => w[0] + w.slice(1).toLowerCase()).join(" ")
-    : "Diplomacy";
-  const drafted = Object.entries(draft).map(([loc, order]) => ({ loc, order }))
-    .sort((a, b) => a.loc.localeCompare(b.loc));
-  const unordered = (state?.orderable ?? []).filter((l) => !draft[l]).map(base);
+  const title = pick ? pick[0] + pick.slice(1).toLowerCase() : null;
 
   return (
-    <main style={{
-      height: "100vh", display: "flex", gap: 12, padding: 12, boxSizing: "border-box",
-      background: `radial-gradient(circle at 25% 15%, ${PARCHMENT}, ${PARCHMENT_DARK})`,
-      fontFamily: "'EB Garamond', Georgia, serif",
-    }}>
-      <div style={{
-        flex: "1 1 auto", minWidth: 0, position: "relative", display: "flex", flexDirection: "column",
-        border: `2px solid ${BORDER_INK}`, background: PARCHMENT, padding: "32px 10px 8px",
-        boxShadow: "inset 0 0 36px rgba(90,70,35,.22), 0 2px 8px rgba(40,32,16,.28)",
-      }}>
-        <div style={{ position: "absolute", top: 6, left: 10, right: 10, display: "flex",
-                      gap: 5, alignItems: "center", zIndex: 2 }}>
-          {ORDER.map((p) => (
-            <div key={p} style={{
-              background: FILL[p], border: `1.5px solid ${BORDER_INK}`, borderRadius: 2,
-              padding: "2px 7px", display: "flex", alignItems: "center", gap: 5,
-              outline: p === ME ? `2px solid ${BORDER_INK}` : undefined,
-            }}>
-              <span style={{ font: "600 9px 'EB Garamond', serif", letterSpacing: 1.3,
-                             color: "#fdfaf2", textTransform: "uppercase" }}>{p.slice(0, 3)}</span>
-              <span style={{ font: "600 10px 'IBM Plex Mono', monospace", color: "#fdfaf2",
-                             background: TOKEN[p], borderRadius: 2, padding: "0 4px" }}>{sc(p)}</span>
-            </div>
-          ))}
-          <div style={{ flex: 1 }} />
-          <button onClick={() => { setBusy(true); start().finally(() => setBusy(false)); }}
-                  disabled={busy}
-                  style={{ font: "600 9px 'EB Garamond', serif", letterSpacing: 1.2,
-                           textTransform: "uppercase", padding: "3px 8px", borderRadius: 2,
-                           border: `1.5px solid ${BORDER_INK}`, background: "transparent",
-                           color: LABEL_INK, cursor: busy ? "wait" : "pointer", marginRight: 10 }}>
-            New game
-          </button>
-          <div style={{ font: "italic 600 17px 'EB Garamond', Georgia, serif", color: LABEL_INK,
-                        whiteSpace: "nowrap" }}>
-            {title}
-            <span style={{ font: "500 8.5px 'IBM Plex Mono', monospace", letterSpacing: 1.2,
-                           textTransform: "uppercase", color: "#7a6c50", marginLeft: 8 }}>
-              {state?.phaseType.toLowerCase() ?? "loading"}
-              {resumed && <span style={{ marginLeft: 6, color: "#8a6414" }}>· resumed</span>}
-            </span>
-          </div>
-        </div>
+    <main style={{ position: "relative", height: "100vh", overflow: "hidden",
+                   background: PARCHMENT, fontFamily: "var(--font-serif), Georgia, serif" }}>
+      {/* the sheet */}
+      <svg viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden
+           style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+        <defs>
+          <radialGradient id="age" cx="46%" cy="40%" r="78%">
+            <stop offset="45%" stopColor="#efe4c6" />
+            <stop offset="100%" stopColor="#c3ad7f" />
+          </radialGradient>
+          <filter id="fibre"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves={4} />
+            <feColorMatrix type="saturate" values="0" /></filter>
+          <filter id="blot"><feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves={3} />
+            <feDisplacementMap in="SourceGraphic" scale="70" /></filter>
+        </defs>
+        <rect width="1600" height="900" fill="url(#age)" />
+        <Rhumbs />
+        {/* damp stains, displaced so they are never circles */}
+        <g filter="url(#blot)" fill="#8a6b3a" fillOpacity={0.09}>
+          <circle cx="170" cy="760" r="120" /><circle cx="1470" cy="180" r="150" />
+          <circle cx="1330" cy="820" r="95" />
+        </g>
+        <rect width="1600" height="900" filter="url(#fibre)" opacity={0.055}
+              style={{ mixBlendMode: "multiply" }} />
+        <g transform="translate(60 610)"><Serpent /></g>
+      </svg>
 
-        <div style={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center",
-                      justifyContent: "center" }}>
-          <div style={{ aspectRatio: "1859 / 1404", maxWidth: "100%", maxHeight: "100%",
-                        width: "100%", border: `1.5px solid ${BORDER_INK}`,
-                        overflow: "hidden", background: "#b9d7e8" }}>
-            {error && <p style={{ padding: 20, color: "#8f3328" }}>Backend unreachable: {error}</p>}
-            {!error && !state && <p style={{ padding: 20, color: "#7a6c50" }}>Loading board…</p>}
-            {state && (
-              <Board state={state} me={ME} ix={ix} entry={entry} highlights={highlights}
-                     orders={Object.values(draft)}
-                     results={review ? state.lastResult?.orders ?? null : null}
-                     onProvince={onProvince} />
+      <div style={{ position: "relative", height: "100%", display: "flex",
+                    flexDirection: "column", padding: "clamp(18px,3vh,34px) clamp(20px,3vw,44px)",
+                    boxSizing: "border-box", gap: 10 }}>
+        {/* title block */}
+        <header style={{ flex: "none" }}>
+          <h1 style={{ margin: 0, font: "400 clamp(44px,6.2vw,86px)/0.95 var(--font-chart), Georgia, serif",
+                       letterSpacing: "0.1em", color: INK, textShadow: "0 1px 0 rgba(255,250,235,.55)" }}>
+            Diplomacy
+          </h1>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 10, maxWidth: 620 }}>
+            <span style={{ height: 1, flex: 1, background: INK, opacity: 0.35 }} />
+            <span style={{ font: "400 13px var(--font-chart), Georgia, serif", letterSpacing: "0.34em",
+                           color: INK, opacity: 0.72 }}>Europe · Anno 1901</span>
+            <span style={{ height: 1, flex: 1, background: INK, opacity: 0.35 }} />
+          </div>
+          <p style={{ margin: "14px 0 0", maxWidth: 440, font: "17px/1.55 var(--font-serif), Georgia, serif",
+                      color: "#4a4231" }}>
+            Seven powers, thirty-four centres, and no dice. Take a seat at the table.
+          </p>
+        </header>
+
+        {/* rose and seat */}
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 36, minHeight: 0 }}>
+          <div style={{ flex: "1 1 auto", minWidth: 0, height: "100%", minHeight: 0,
+                        display: "grid", placeItems: "center" }}>
+            <CompassRose selected={pick} onSelect={setPick} onRandom={random} spinning={spinning} />
+          </div>
+
+          <aside style={{ flex: "0 0 360px", maxHeight: "100%", overflowY: "auto" }}>
+            {!pick && (
+              <p style={{ font: "italic 19px/1.6 var(--font-serif), Georgia, serif", color: "#5b523e",
+                          borderLeft: `2px solid ${PARCHMENT_DARK}`, paddingLeft: 16, margin: 0 }}>
+                Choose a power from the rose, or let fortune decide for you.
+              </p>
             )}
-          </div>
+            {pick && (
+              <div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+                  <span style={{ width: 15, height: 15, background: TOKEN[pick],
+                                 border: `1.5px solid ${BORDER_INK}` }} />
+                  <h2 style={{ margin: 0, font: "400 38px/1 var(--font-chart), Georgia, serif",
+                               letterSpacing: "0.05em", color: INK }}>{title}</h2>
+                </div>
+                <p style={{ margin: "14px 0 0", font: "17px/1.6 var(--font-serif), Georgia, serif",
+                            color: "#4a4231" }}>{CHARACTER[pick]}</p>
+                <dl style={{ margin: "20px 0 0", display: "grid", gridTemplateColumns: "auto 1fr",
+                             gap: "7px 16px", font: "14px var(--font-serif), Georgia, serif" }}>
+                  <dt style={{ font: "400 11px var(--font-chart), Georgia, serif",
+                               letterSpacing: "0.2em", color: "#7a6c50", alignSelf: "center" }}>HOME</dt>
+                  <dd style={{ margin: 0, font: "500 13px var(--font-mono), monospace",
+                               letterSpacing: 1, color: LABEL_INK }}>{homes(pick).join("  ")}</dd>
+                  <dt style={{ font: "400 11px var(--font-chart), Georgia, serif",
+                               letterSpacing: "0.2em", color: "#7a6c50", alignSelf: "center" }}>TABLE</dt>
+                  <dd style={{ margin: 0, color: "#4a4231" }}>
+                    Six scripted opponents. Agents once the model seats are wired up.
+                  </dd>
+                </dl>
+              </div>
+            )}
+
+            <button onClick={begin} disabled={!pick || busy}
+                    style={{ marginTop: 26, display: "flex", alignItems: "center", gap: 14,
+                             border: 0, background: "transparent", padding: 0,
+                             cursor: pick && !busy ? "pointer" : "not-allowed",
+                             opacity: pick ? 1 : 0.42 }}>
+              <svg width="66" height="66" viewBox="-33 -33 66 66" aria-hidden>
+                {/* a wax seal, pressed rather than printed */}
+                <path d={Array.from({ length: 28 }, (_, i) => {
+                  const a = (i / 28) * Math.PI * 2;
+                  const r = 27 + (i % 3 === 0 ? 2.6 : i % 2 === 0 ? -2.2 : 0.8);
+                  return `${i ? "L" : "M"} ${(Math.cos(a) * r).toFixed(1)} ${(Math.sin(a) * r).toFixed(1)}`;
+                }).join(" ") + " Z"} fill="#8f2f28" stroke="#5e1d18" strokeWidth={1.4} />
+                <circle r={20} fill="none" stroke="#d8a79e" strokeWidth={1.1} strokeOpacity={0.5} />
+                <text y={7} textAnchor="middle" fontFamily="var(--font-chart), Georgia, serif"
+                      fontSize={21} fill="#f3d9d4" fillOpacity={0.92}>
+                  {pick ? pick[0] : "D"}
+                </text>
+              </svg>
+              <span style={{ textAlign: "left" }}>
+                <span style={{ display: "block", font: "400 21px var(--font-chart), Georgia, serif",
+                               letterSpacing: "0.12em", color: INK }}>
+                  {busy ? "Sealing…" : "Set the board"}
+                </span>
+                <span style={{ display: "block", font: "italic 14px var(--font-serif), Georgia, serif",
+                               color: "#7a6c50", marginTop: 2 }}>
+                  {pick ? `Spring 1901 · you hold ${title}` : "choose a power first"}
+                </span>
+              </span>
+            </button>
+
+            {error && <p style={{ color: "#8f2f28", font: "italic 15px var(--font-serif), serif" }}>{error}</p>}
+          </aside>
         </div>
 
-        {/* Running instruction, as webDiplomacy shows under the board. */}
-        <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 10, paddingTop: 6,
-                      minHeight: 26 }}>
-          <span style={{ font: "italic 15px 'EB Garamond', Georgia, serif", color: "#5f5540" }}>
-            {ix ? hint(ix, entry) : "Loading…"}
-          </span>
-          {ix && chips(ix, entry).map((o) => (
-            <button key={o.order}
-                    onClick={() => { record(o.order); setEntry({ kind: "idle" }); }}
-                    style={{ font: "600 10px 'EB Garamond', serif", letterSpacing: 1.2,
-                             textTransform: "uppercase", padding: "4px 9px", borderRadius: 2,
-                             border: `1.5px solid ${BORDER_INK}`, background: "#8a6414",
-                             color: "#fdfaf2", cursor: "pointer" }}>
-              {o.label}
-            </button>
-          ))}
-          {entry.kind !== "idle" && (
-            <button onClick={() => setEntry({ kind: "idle" })}
-                    style={{ border: 0, background: "transparent", color: "#7a6c50", cursor: "pointer",
-                             font: "italic 13px 'EB Garamond', serif", textDecoration: "underline" }}>
-              cancel
-            </button>
+        <footer style={{ flex: "none", display: "flex", alignItems: "center", gap: 18,
+                         borderTop: `1px solid ${PARCHMENT_DARK}`, paddingTop: 14, marginTop: 10,
+                         font: "15px var(--font-serif), Georgia, serif", color: "#6b6049" }}>
+          {resume ? (
+            <>
+              <span>
+                A game is already under way — {resume.power[0] + resume.power.slice(1).toLowerCase()},{" "}
+                {resume.phase.split(" ").slice(0, 2).map((w) => w[0] + w.slice(1).toLowerCase()).join(" ")}.
+              </span>
+              <button onClick={() => router.push(`/game/${resume.id}`)}
+                      style={{ border: `1.5px solid ${BORDER_INK}`, background: "transparent",
+                               font: "400 12px var(--font-chart), Georgia, serif", letterSpacing: "0.16em",
+                               color: INK, padding: "6px 14px", cursor: "pointer" }}>
+                Return to it
+              </button>
+            </>
+          ) : (
+            <span>No game under way.</span>
           )}
-        </div>
+        </footer>
       </div>
-
-      <aside style={{
-        width: 380, flex: "none", display: "flex", flexDirection: "column", gap: 10,
-        border: `2px solid ${BORDER_INK}`, background: PARCHMENT, padding: 14, minHeight: 0,
-        boxShadow: "inset 0 0 30px rgba(90,70,35,.2), 0 2px 8px rgba(40,32,16,.28)",
-      }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8,
-                      borderBottom: `1.5px solid ${PARCHMENT_DARK}`, paddingBottom: 8 }}>
-          <span style={{ width: 11, height: 11, background: FILL[ME],
-                         border: `1.5px solid ${BORDER_INK}` }} />
-          <span style={{ font: "italic 600 20px 'EB Garamond', Georgia, serif", color: LABEL_INK }}>
-            France
-          </span>
-          <span style={{ font: "500 9px 'IBM Plex Mono', monospace", letterSpacing: 1.2,
-                         textTransform: "uppercase", color: "#7a6c50" }}>
-            {sc(ME)} centres · {state?.powers[ME]?.units.length ?? 0} units
-          </span>
-        </div>
-
-        <OrdersPanel power={ME} orders={drafted} unordered={unordered}
-                     onClear={(loc) => setDraft((d) => { const n = { ...d }; delete n[loc]; return n; })}
-                     onClearAll={() => setDraft({})}
-                     onSubmit={submit} onAdvance={advance} busy={busy} note={note} />
-
-        {state?.lastResult && (
-          <>
-            <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />
-            <ResultsPanel result={state.lastResult} onMap={review} setOnMap={setReview} />
-          </>
-        )}
-
-        <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />
-
-        <PressPanel me={ME} messages={press} onSend={sendPress} />
-      </aside>
     </main>
   );
 }

@@ -102,8 +102,12 @@ async def new_game(body: NewGame):
 @app.get("/api/games/{game_id}/state")
 async def state(game_id: str, power: str | None = None):
     f = get(game_id)
-    out = f.state(power.upper() if power else None)
     loaded = storage.load_game(game_id)
+    human = loaded[1] if loaded else HUMAN.get(game_id)
+    # The seat is a property of the game, not of the query, so the browser does
+    # not have to remember which power it picked.
+    out = f.state((power or human or "").upper() or None)
+    out["humanPower"] = human
     out["lastResult"] = loaded[2] if loaded else None
     return out
 
