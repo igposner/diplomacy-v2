@@ -144,6 +144,20 @@ export default function GamePage() {
     .sort((a, b) => a.loc.localeCompare(b.loc));
   const unordered = (state?.orderable ?? []).filter((l) => !draft[l]).map(base);
 
+  /* A build turn is measured in builds, not in provinces you could build in:
+     you are owed centres minus units, capped by the home centres actually free. */
+  const adjust = state?.phaseType === "ADJUSTMENT" && me
+    ? (() => {
+        const p = state.powers[me];
+        const delta = (p?.centers.length ?? 0) - (p?.units.length ?? 0);
+        return {
+          builds: Math.max(0, delta),
+          removals: Math.max(0, -delta),
+          placeable: Object.keys(state.legalOrders ?? {}).length,
+        };
+      })()
+    : null;
+
   return (
     <main style={{
       height: "100vh", display: "flex", gap: 12, padding: 12, boxSizing: "border-box",
@@ -263,7 +277,7 @@ export default function GamePage() {
         <OrdersPanel power={seat} orders={drafted} unordered={unordered}
                      onClear={(loc) => setDraft((d) => { const n = { ...d }; delete n[loc]; return n; })}
                      onClearAll={() => setDraft({})}
-                     phaseType={state?.phaseType ?? ""}
+                     phaseType={state?.phaseType ?? ""} adjust={adjust}
                      onSubmit={submit} busy={busy} note={note} />
 
         <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />

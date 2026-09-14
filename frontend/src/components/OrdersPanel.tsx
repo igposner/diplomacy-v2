@@ -28,19 +28,29 @@ export function describe(o: string): string {
 }
 
 export default function OrdersPanel({
-  power, orders, unordered, phaseType, onClear, onClearAll, onSubmit, busy, note,
+  power, orders, unordered, phaseType, adjust, onClear, onClearAll, onSubmit, busy, note,
 }: {
   power: Power;
   orders: { loc: string; order: string }[];
   unordered: string[];
   phaseType: string;
+  /** On a build turn, what you are owed -- which is centres minus units, not
+      the number of provinces you could put something in. */
+  adjust: { builds: number; removals: number; placeable: number } | null;
   onClear: (loc: string) => void;
   onClearAll: () => void;
   onSubmit: () => void;
   busy: boolean;
   note: string | null;
 }) {
-  const total = orders.length + unordered.length;
+  const owed = adjust ? adjust.builds + adjust.removals : 0;
+  const total = adjust ? owed : orders.length + unordered.length;
+  const noun = adjust
+    ? (adjust.builds ? (adjust.builds === 1 ? "build" : "builds")
+                     : (adjust.removals === 1 ? "removal" : "removals"))
+    : (total === 1 ? "unit" : "units");
+  const verb = adjust ? (adjust.builds ? "placed" : "chosen") : "ordered";
+  const capped = adjust ? adjust.builds - adjust.placeable : 0;
   return (
     <section style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: "1 1 auto" }}>
       <header style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "0 0 8px" }}>
@@ -49,7 +59,8 @@ export default function OrdersPanel({
         </h2>
         <span style={{ font: "500 9px 'IBM Plex Mono', monospace", letterSpacing: 1.2,
                        textTransform: "uppercase", color: "#7a6c50" }}>
-          {total === 0 ? "nothing to order" : `${orders.length} of ${total} given`}
+          {total === 0 ? "nothing to adjust"
+                       : `${orders.length} of ${total} ${noun} ${verb}`}
         </span>
         <span style={{ flex: 1 }} />
         {orders.length > 0 && (
@@ -63,9 +74,18 @@ export default function OrdersPanel({
 
       <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", display: "flex",
                     flexDirection: "column", gap: 4 }}>
+        {adjust && owed > 0 && (
+          <p style={{ font: "italic 15px/1.5 'EB Garamond', serif", color: "#5f5540", margin: "0 0 4px" }}>
+            {adjust.builds
+              ? `You gained ground: ${adjust.builds} new ${adjust.builds === 1 ? "unit" : "units"} to build.`
+              : `You are over strength: remove ${adjust.removals} ${adjust.removals === 1 ? "unit" : "units"}.`}
+            {capped > 0 && ` Only ${adjust.placeable} home ${adjust.placeable === 1 ? "centre is" : "centres are"} free, so ${capped} ${capped === 1 ? "build is" : "builds are"} lost.`}
+          </p>
+        )}
         {total === 0 && (
           <p style={{ font: "italic 15px 'EB Garamond', serif", color: "#7a6c50", margin: 0 }}>
-            No units of yours need orders this phase.
+            {adjust ? "Your centres and units are level; nothing to adjust."
+                    : "No units of yours need orders this phase."}
           </p>
         )}
         {orders.map(({ loc, order }) => (
@@ -86,10 +106,16 @@ export default function OrdersPanel({
                              color: "#8d7f62", font: "600 13px 'IBM Plex Mono', monospace" }}>×</button>
           </div>
         ))}
-        {unordered.length > 0 && (
+        {adjust && owed > orders.length && (
+          <p style={{ font: "italic 13px 'EB Garamond', serif", color: "#8f6a2a", margin: "6px 0 0" }}>
+            {owed - orders.length} still to {adjust.builds ? "place" : "choose"}.
+            {adjust.builds ? " Unplaced builds are waived." : ""}
+          </p>
+        )}
+        {!adjust && unordered.length > 0 && (
           <p style={{ font: "italic 13px 'EB Garamond', serif", color: "#8f6a2a", margin: "6px 0 0" }}>
             {unordered.join(", ")} {unordered.length === 1 ? "has" : "have"} no order yet
-            and will {phaseType === "ADJUSTMENT" ? "be waived" : "hold"}.
+            and will hold.
           </p>
         )}
       </div>
