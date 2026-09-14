@@ -1,7 +1,7 @@
 /* Covers every order shape the board can produce, including the ones a given
    position may not offer (convoy, two-coast destinations). Run: npm run test:orders */
 import assert from "node:assert/strict";
-import { indexLegal, click, targets, chips, type Entry } from "../src/lib/orderEntry.ts";
+import { indexLegal, click, targets, chips, modes, type Entry } from "../src/lib/orderEntry.ts";
 
 const legal = {
   PAR: ["A PAR H", "A PAR - BUR", "A PAR - PIC", "A PAR S A BUR", "A PAR S A BUR - MUN"],
@@ -115,5 +115,38 @@ assert.equal(s.order, undefined); ok("removing takes two steps, never one stray 
 assert.deepEqual(chips(dIx, { kind: "unit", loc: "CON" }), [{ label: "Disband", order: "F CON D" }]);
 ok("a surplus unit offers disband");
 assert.equal(chips(dIx, idle).length, 0); ok("no waive is offered when none is legal");
+
+/* ---------------- a convoy orders both halves ---------------- */
+const vIx = indexLegal({
+  ENG: ["F ENG H", "F ENG C A PIC - BEL", "F ENG C A PIC - LON"],
+  PIC: ["A PIC H", "A PIC - BEL", "A PIC - BEL VIA", "A PIC - BUR"],
+});
+s = click(vIx, { kind: "convoyInto", loc: "ENG", from: "PIC" }, "BEL");
+assert.equal(s.order, "F ENG C A PIC - BEL");
+assert.equal(s.companion, "A PIC - BEL VIA");
+ok("a convoy orders the fleet to carry AND the army to go, by the VIA route");
+// an army belonging to someone else is not ours to order
+const wIx = indexLegal({ ENG: ["F ENG C A LON - BEL"] });
+s = click(wIx, { kind: "convoyInto", loc: "ENG", from: "LON" }, "BEL");
+assert.equal(s.order, "F ENG C A LON - BEL");
+assert.equal(s.companion, undefined);
+ok("convoying another power's army orders only our fleet");
+
+/* ---------------- modes are discoverable, not hidden behind keys ------------- */
+const cIx = indexLegal({
+  ENG: ["F ENG H", "F ENG - MAO", "F ENG C A LON - BEL", "F ENG S F NTH"],
+  PAR: ["A PAR H", "A PAR - BUR"],
+});
+assert.deepEqual(modes(cIx, { kind: "unit", loc: "ENG" }).map((m) => m.label),
+                 ["Hold", "Move", "Support", "Convoy"]);
+ok("a fleet that can convoy is offered a Convoy button");
+assert.deepEqual(modes(cIx, { kind: "unit", loc: "PAR" }).map((m) => m.label), ["Hold", "Move"]);
+ok("a unit that cannot convoy or support is not offered either");
+assert.equal(modes(cIx, { kind: "unit", loc: "ENG" }).find((m) => m.label === "Convoy")!.next!.kind,
+             "convoyPick");
+ok("the Convoy button starts the convoy flow");
+assert.deepEqual(modes(rIx, { kind: "unit", loc: "BUR" }).map((m) => m.label), ["Retreat"]);
+ok("a dislodged unit is offered Retreat, not Move");
+assert.deepEqual(modes(cIx, idle), []); ok("no modes with nothing selected");
 
 console.log(`\n${n} checks passed`);

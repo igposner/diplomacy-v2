@@ -124,17 +124,41 @@ async def orders(game_id: str, body: Orders):
     return {"accepted": body.orders}
 
 
-@app.post("/api/games/{game_id}/process")
-async def process(game_id: str):
-    f = get(game_id)
-    bots = {p: GreedyBot(p) for p in POWERS}
-    for p in POWERS:
+async def _resolve(game_id: str, f: Facade, human: str | None) -> dict:
+    """Fill in the other powers and process. NEVER the human's seat: their
+    unordered units hold, which is the rule. Ordering them for them was a bug --
+    pressing resolve used to have a bot play your pieces."""
+    bots = {p: GreedyBot(p) for p in POWERS if p != human}
+    for p, bot in bots.items():
         if f.legal_orders(p) and not f.game.powers[p].orders:
-            f.game.set_orders(p, await bots[p].decide_orders(f.game))
+            f.game.set_orders(p, await bot.decide_orders(f.game))
     r = f.process()
     payload = result_json(r)
     storage.save_game(game_id, f.game, payload)
     return {**payload, "next": f.phase}
+
+
+@app.post("/api/games/{game_id}/submit")
+async def submit(game_id: str, body: Orders):
+    """One action, as at a real table: hand in your orders and the turn goes
+    through. Everything resolves at once; anything you left unordered holds."""
+    f = get(game_id)
+    power = body.power.upper()
+    bad = f.validate(power, body.orders)
+    if bad:
+        raise HTTPException(400, {"message": "illegal orders", "orders": bad})
+    if body.orders:
+        f.submit(power, body.orders)
+    loaded = storage.load_game(game_id)
+    human = loaded[1] if loaded else HUMAN.get(game_id)
+    return await _resolve(game_id, f, human)
+
+
+@app.post("/api/games/{game_id}/process")
+async def process(game_id: str):
+    f = get(game_id)
+    loaded = storage.load_game(game_id)
+    return await _resolve(game_id, f, loaded[1] if loaded else HUMAN.get(game_id))
 
 
 @app.get("/api/games/{game_id}/messages")

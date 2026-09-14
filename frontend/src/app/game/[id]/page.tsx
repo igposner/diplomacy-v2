@@ -5,8 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import Board, { type BoardState } from "@/components/Board";
 import OrdersPanel from "@/components/OrdersPanel";
 import PressPanel, { type Press } from "@/components/PressPanel";
-import ResultsPanel, { type PhaseResult } from "@/components/ResultsPanel";
-import { chips, click, hint, indexLegal, targets, type Entry } from "@/lib/orderEntry";
+import type { PhaseResult } from "@/lib/results";
+import { chips, click, hint, indexLegal, modes, targets, type Entry } from "@/lib/orderEntry";
 import { BORDER_INK, FILL, LABEL_INK, PARCHMENT, PARCHMENT_DARK, TOKEN, type Power } from "@/lib/map";
 
 const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
@@ -36,6 +36,9 @@ export default function GamePage() {
   // Failure marks are a report on the last turn, not part of the live board.
   const [review, setReview] = useState(false);
   const consumed = useRef(false);
+
+  // A new phase means a new set of units to order; last turn's draft is void.
+  useEffect(() => { setDraft({}); setNote(null); setEntry({ kind: "idle" }); }, [state?.phase]);
 
   /* The seat belongs to the game, not the browser. */
   const me: Power | null = state?.humanPower ?? null;
@@ -97,30 +100,31 @@ export default function GamePage() {
     if (consumed.current) { consumed.current = false; return; }
     const step = click(ix, entry, p);
     if (step.order) record(step.order);
+    if (step.companion) record(step.companion);
     setEntry(step.next);
   };
 
+  /* One action, as at a real table: hand in your orders and the turn resolves.
+     Anything you left unordered holds. */
   const submit = async () => {
-    if (!gameId) return;
-    const orders = Object.values(draft);
-    const r = await fetch(`${API}/api/games/${gameId}/orders`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ power: me, orders }),
-    });
-    if (r.ok) { setNote(`${orders.length} order${orders.length === 1 ? "" : "s"} accepted`); return; }
-    const d = await r.json().catch(() => null);
-    setNote(`rejected: ${d?.detail?.orders?.join(", ") ?? r.status}`);
-  };
-
-  const advance = async () => {
-    if (!gameId) return;
+    if (!gameId || !me) return;
     setBusy(true);
+    setNote(null);
     try {
-      await fetch(`${API}/api/games/${gameId}/process`, { method: "POST" });
+      const r = await fetch(`${API}/api/games/${gameId}/submit`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ power: me, orders: Object.values(draft) }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => null);
+        setNote(`rejected: ${d?.detail?.orders?.join(", ") ?? r.status}`);
+        return;
+      }
       await load(gameId);
-      setReview(true);   // show what just happened, until you touch the board
+      setReview(true);   // the board shows what happened until you touch it
     } finally { setBusy(false); }
   };
+
 
   const sendPress = async (to: string, text: string) => {
     if (!gameId) return;
@@ -205,6 +209,19 @@ export default function GamePage() {
           <span style={{ font: "italic 15px 'EB Garamond', Georgia, serif", color: "#5f5540" }}>
             {ix ? hint(ix, entry) : "Loading…"}
           </span>
+          {ix && modes(ix, entry).filter((m) => m.next || m.order).map((m) => (
+            <button key={m.label} title={m.hint}
+                    onClick={() => {
+                      if (m.order) { record(m.order); setEntry({ kind: "idle" }); }
+                      else if (m.next) setEntry(m.next);
+                    }}
+                    style={{ font: "600 10px 'EB Garamond', serif", letterSpacing: 1.2,
+                             textTransform: "uppercase", padding: "4px 9px", borderRadius: 2,
+                             border: `1.5px solid ${BORDER_INK}`, background: "transparent",
+                             color: LABEL_INK, cursor: "pointer" }}>
+              {m.label}
+            </button>
+          ))}
           {ix && chips(ix, entry).map((o) => (
             <button key={o.order}
                     onClick={() => { record(o.order); setEntry({ kind: "idle" }); }}
@@ -246,14 +263,8 @@ export default function GamePage() {
         <OrdersPanel power={seat} orders={drafted} unordered={unordered}
                      onClear={(loc) => setDraft((d) => { const n = { ...d }; delete n[loc]; return n; })}
                      onClearAll={() => setDraft({})}
-                     onSubmit={submit} onAdvance={advance} busy={busy} note={note} />
-
-        {state?.lastResult && (
-          <>
-            <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />
-            <ResultsPanel result={state.lastResult} onMap={review} setOnMap={setReview} />
-          </>
-        )}
+                     phaseType={state?.phaseType ?? ""}
+                     onSubmit={submit} busy={busy} note={note} />
 
         <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />
 

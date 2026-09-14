@@ -44,8 +44,22 @@ async def run() -> int:
     listed = await main.list_games()
     assert any(x["id"] == gid for x in listed), "game missing from the list"
 
+    # --- the human seat is never played for them -----------------------------
+    # A bot used to fill in orders for every power without them, the human
+    # included, so resolving without submitting moved your own pieces.
+    g2 = await main.new_game(NewGame(power="FRANCE", advance=0))
+    gid2 = g2["game_id"]
+    held = (await main.state(gid2, "FRANCE"))["powers"]["FRANCE"]["units"]
+    out = await main.submit(gid2, Orders(power="FRANCE", orders=[]))
+    after_hold = (await main.state(gid2, "FRANCE"))["powers"]["FRANCE"]["units"]
+    assert held == after_hold, f"a bot played the human seat: {held} -> {after_hold}"
+    assert not [o for o in out["orders"] if o["power"] == "FRANCE"], \
+        "orders were invented for the human"
+    assert [o for o in out["orders"] if o["power"] != "FRANCE"], "the other powers did not move"
+
     codes = sorted({c for o in r["orders"] for c in o["outcomes"]})
-    print(f"ok: survived two restarts; {len(r['orders'])} order results; outcomes seen {codes}")
+    print(f"ok: survived two restarts; {len(r['orders'])} order results; outcomes seen {codes}; "
+          f"human seat held on an empty submit")
     return 0
 
 

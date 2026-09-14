@@ -28,15 +28,15 @@ export function describe(o: string): string {
 }
 
 export default function OrdersPanel({
-  power, orders, unordered, onClear, onClearAll, onSubmit, onAdvance, busy, note,
+  power, orders, unordered, phaseType, onClear, onClearAll, onSubmit, busy, note,
 }: {
   power: Power;
   orders: { loc: string; order: string }[];
   unordered: string[];
+  phaseType: string;
   onClear: (loc: string) => void;
   onClearAll: () => void;
   onSubmit: () => void;
-  onAdvance: () => void;
   busy: boolean;
   note: string | null;
 }) {
@@ -88,26 +88,20 @@ export default function OrdersPanel({
         ))}
         {unordered.length > 0 && (
           <p style={{ font: "italic 13px 'EB Garamond', serif", color: "#8f6a2a", margin: "6px 0 0" }}>
-            Still waiting on {unordered.join(", ")}. Unordered units hold.
+            {unordered.join(", ")} {unordered.length === 1 ? "has" : "have"} no order yet
+            and will {phaseType === "ADJUSTMENT" ? "be waived" : "hold"}.
           </p>
         )}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 10, flexWrap: "wrap" }}>
-        <button onClick={onSubmit} disabled={busy || orders.length === 0}
-                style={{ font: "600 10px 'EB Garamond', serif", letterSpacing: 1.3,
-                         textTransform: "uppercase", padding: "8px 12px", borderRadius: 2,
-                         border: `1.5px solid ${BORDER_INK}`, background: CARD, color: LABEL_INK,
-                         cursor: orders.length ? "pointer" : "not-allowed",
-                         opacity: orders.length ? 1 : 0.5 }}>
-          Submit
-        </button>
-        <button onClick={onAdvance} disabled={busy}
-                style={{ font: "600 10px 'EB Garamond', serif", letterSpacing: 1.3,
-                         textTransform: "uppercase", padding: "8px 12px", borderRadius: 2,
+        {/* One action. Orders go in, the turn resolves, everything moves at once. */}
+        <button onClick={onSubmit} disabled={busy}
+                style={{ font: "600 11px 'EB Garamond', serif", letterSpacing: 1.3,
+                         textTransform: "uppercase", padding: "9px 15px", borderRadius: 2,
                          border: `1.5px solid ${BORDER_INK}`, background: "#8a6414",
                          color: "#fdfaf2", cursor: busy ? "wait" : "pointer" }}>
-          {busy ? "Resolving…" : "Resolve phase"}
+          {busy ? "Orders going in…" : "Submit orders"}
         </button>
         {note && (
           <span style={{ font: "italic 13px 'EB Garamond', serif",
