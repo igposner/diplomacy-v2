@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import CompassRose from "@/components/CompassRose";
+import SeaDragon from "@/components/SeaDragon";
 import { BORDER_INK, LABEL_INK, PARCHMENT, PARCHMENT_DARK, TOKEN, type Power } from "@/lib/map";
 import { CHARACTER, POWERS, homes } from "@/lib/powers";
 
@@ -29,15 +30,13 @@ function Rhumbs() {
   return <>{lines}</>;
 }
 
-/* A sea serpent, the way a chart-maker fills empty ocean. */
-function Serpent() {
+/* An empty ocean wants a monster. This one is Lorc's sea dragon from
+   game-icons.net under CC BY 3.0 — a woodcut silhouette in the manner of the
+   sea orms on the Carta Marina, rather than something drawn by hand here. */
+function Monster() {
   return (
-    <g stroke={INK} strokeOpacity={0.3} fill="none" strokeWidth={2.2} strokeLinecap="round">
-      <path d="M40 120 q34 -40 70 -6 q34 34 70 0 q34 -34 70 0 q30 30 62 6" />
-      <path d="M40 120 q-14 -20 4 -34 q22 -16 40 2 q10 10 2 22" />
-      <circle cx="58" cy="92" r="3.2" fill={INK} fillOpacity={0.45} stroke="none" />
-      <path d="M96 96 l10 -20 M124 100 l6 -22 M152 96 l10 -20" strokeWidth={1.6} />
-      <path d="M282 120 q18 14 34 4 q-6 18 -24 14" />
+    <g transform="translate(44 596) rotate(-6) scale(0.52)" opacity={0.17}>
+      <SeaDragon fill="#4a3d29" />
     </g>
   );
 }
@@ -120,7 +119,7 @@ export default function Lobby() {
         </g>
         <rect width="1600" height="900" filter="url(#fibre)" opacity={0.055}
               style={{ mixBlendMode: "multiply" }} />
-        <g transform="translate(60 610)"><Serpent /></g>
+        <Monster />
       </svg>
 
       <div style={{ position: "relative", height: "100%", display: "flex",
@@ -138,9 +137,11 @@ export default function Lobby() {
                            color: INK, opacity: 0.72 }}>Europe · Anno 1901</span>
             <span style={{ height: 1, flex: 1, background: INK, opacity: 0.35 }} />
           </div>
-          <p style={{ margin: "14px 0 0", maxWidth: 440, font: "17px/1.55 var(--font-serif), Georgia, serif",
+          <p style={{ margin: "14px 0 0", maxWidth: 560, font: "17px/1.6 var(--font-serif), Georgia, serif",
                       color: "#4a4231" }}>
-            Seven powers, thirty-four centres, and no dice. Take a seat at the table.
+            Seven powers, thirty-four centres, and no dice. Take a seat at the table —
+            choose a power from the rose, or strike the compass at its centre and let
+            fortune decide for you.
           </p>
         </header>
 
@@ -155,7 +156,7 @@ export default function Lobby() {
             {!pick && (
               <p style={{ font: "italic 19px/1.6 var(--font-serif), Georgia, serif", color: "#5b523e",
                           borderLeft: `2px solid ${PARCHMENT_DARK}`, paddingLeft: 16, margin: 0 }}>
-                Choose a power from the rose, or let fortune decide for you.
+                No power chosen yet.
               </p>
             )}
             {pick && (
@@ -236,6 +237,10 @@ export default function Lobby() {
           ) : (
             <span>No game under way.</span>
           )}
+          <span style={{ flex: 1 }} />
+          <span style={{ font: "12px var(--font-serif), Georgia, serif", color: "#8a7f68" }}>
+            Sea dragon by Lorc, game-icons.net, CC BY 3.0
+          </span>
         </footer>
       </div>
     </main>

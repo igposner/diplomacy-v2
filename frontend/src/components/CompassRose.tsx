@@ -84,13 +84,11 @@ export default function CompassRose({
         <circle r={7} fill={PAPER_HI} stroke={INK} strokeWidth={1.6} />
       </g>
 
-      {/* fortune decides */}
+      {/* The hub is the random pick. It carries no label because anything drawn
+          here disappears under the rose; the instruction sits in the page copy. */}
       <g onClick={onRandom} style={{ cursor: "pointer" }}>
+        <title>Let fortune decide</title>
         <circle r={54} fill="transparent" />
-        <text y={74} textAnchor="middle" fontFamily="var(--font-chart), Georgia, serif"
-              fontSize={15} letterSpacing={1.4} fill={INK} fillOpacity={0.72}>
-          let fortune decide
-        </text>
       </g>
 
       {/* the seven seats, at their bearings */}
@@ -109,9 +107,6 @@ export default function CompassRose({
                   strokeLinejoin="round" />
             <text y={4} textAnchor="middle" fontFamily="var(--font-chart), Georgia, serif"
                   fontSize={17} letterSpacing={1.2} fill="#fdfaf2">{p.slice(0, 3)}</text>
-            <text y={54} textAnchor="middle" fontFamily="var(--font-chart), Georgia, serif"
-                  fontSize={15} letterSpacing={1.1} fill={INK}
-                  fillOpacity={on ? 0.95 : 0.6}>{p[0] + p.slice(1).toLowerCase()}</text>
           </g>
         );
       })}
