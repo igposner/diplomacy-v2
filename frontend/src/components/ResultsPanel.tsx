@@ -19,7 +19,11 @@ const MEANING: Record<string, string> = {
   NO_CONVOY: "no convoy", DISRUPTED: "convoy disrupted", DISBAND: "disbanded",
 };
 
-export default function ResultsPanel({ result }: { result: PhaseResult | null }) {
+export default function ResultsPanel({ result, onMap, setOnMap }: {
+  result: PhaseResult | null;
+  onMap: boolean;
+  setOnMap: (v: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
   if (!result) return null;
 
@@ -42,6 +46,12 @@ export default function ResultsPanel({ result }: { result: PhaseResult | null })
             : `${failed.length} of ${result.orders.length} failed`}
         </span>
         <span style={{ flex: 1 }} />
+        <button onClick={() => setOnMap(!onMap)}
+                style={{ border: 0, background: "transparent", cursor: "pointer",
+                         color: onMap ? "#8a6414" : "#7a6c50", marginRight: 8,
+                         font: "italic 13px 'EB Garamond', serif", textDecoration: "underline" }}>
+          {onMap ? "hide from map" : "show on map"}
+        </button>
         <button onClick={() => setOpen((v) => !v)}
                 style={{ border: 0, background: "transparent", color: "#7a6c50", cursor: "pointer",
                          font: "italic 13px 'EB Garamond', serif", textDecoration: "underline" }}>

@@ -30,6 +30,8 @@ export default function Page() {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [note, setNote] = useState<string | null>(null);
   const [resumed, setResumed] = useState(false);
+  // Failure marks are a report on the last turn, not part of the live board.
+  const [review, setReview] = useState(false);
   const consumed = useRef(false);
 
   const ix = useMemo(
@@ -109,6 +111,7 @@ export default function Page() {
      A separate click on an already-selected unit is what orders a hold. */
   const onProvince = (p: string, phase: "down" | "up") => {
     if (!ix) return;
+    if (review) setReview(false);   // you are playing now, not reviewing
     if (phase === "down") {
       consumed.current = false;
       // Pre-select on press so a drag becomes a move, but only where pressing
@@ -146,6 +149,7 @@ export default function Page() {
     try {
       await fetch(`${API}/api/games/${gameId}/process`, { method: "POST" });
       await load(gameId);
+      setReview(true);   // show what just happened, until you touch the board
     } finally { setBusy(false); }
   };
 
@@ -220,7 +224,8 @@ export default function Page() {
             {!error && !state && <p style={{ padding: 20, color: "#7a6c50" }}>Loading board…</p>}
             {state && (
               <Board state={state} me={ME} ix={ix} entry={entry} highlights={highlights}
-                     orders={Object.values(draft)} results={state.lastResult?.orders ?? null}
+                     orders={Object.values(draft)}
+                     results={review ? state.lastResult?.orders ?? null : null}
                      onProvince={onProvince} />
             )}
           </div>
@@ -278,7 +283,7 @@ export default function Page() {
         {state?.lastResult && (
           <>
             <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />
-            <ResultsPanel result={state.lastResult} />
+            <ResultsPanel result={state.lastResult} onMap={review} setOnMap={setReview} />
           </>
         )}
 

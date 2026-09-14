@@ -131,30 +131,51 @@ function DraftedOrder({ order, colour }: { order: string; colour: string }) {
   return null;
 }
 
-/* Marks for the phase that just resolved: a cross where a move bounced, a
-   strike through a unit that was dislodged. Drawn from the engine's own codes. */
-function FailureMarks({ result }: { result: { order: string; outcomes: string[] }[] }) {
+/* Marks for the phase that just resolved. Shown for review straight after a
+   resolve, then cleared the moment you start ordering -- they are a report on
+   the last turn, not part of the board you are playing on.
+
+   Offset up and right of the anchor so a mark never hides the piece standing
+   there, and drawn above the tokens so it is never hidden by one either. */
+const FAILED_MOVE = ["BOUNCE", "NO_CONVOY", "DISRUPTED", "VOID"];
+
+function FailureMarks({ result }: { result: { order: string; outcomes: string[]; ok?: boolean }[] }) {
   const marks: React.ReactNode[] = [];
+  const cross = (key: string, x: number, y: number, title: string) => (
+    <g key={key} style={{ pointerEvents: "none" }}>
+      <title>{title}</title>
+      <circle cx={x} cy={y} r={15} fill="#fdfaf2" fillOpacity={0.92}
+              stroke="#8f3328" strokeWidth={1.5} />
+      <path d={`M ${x - 8} ${y - 8} L ${x + 8} ${y + 8} M ${x + 8} ${y - 8} L ${x - 8} ${y + 8}`}
+            stroke="#8f3328" strokeWidth={4.2} strokeLinecap="round" />
+    </g>
+  );
+
   result.forEach((o, i) => {
+    const why = o.outcomes.join(", ").toLowerCase().replace(/_/g, " ");
     const mv = o.order.match(OR.move);
-    if (o.outcomes.includes("BOUNCE") && mv) {
+    if (mv && o.outcomes.some((c) => FAILED_MOVE.includes(c))) {
       const a = unitAnchor(mv[2]);
-      if (a) marks.push(
-        <g key={`b-${i}`} style={{ pointerEvents: "none" }}>
-          <circle cx={a[0]} cy={a[1]} r={17} fill="#fdfaf2" fillOpacity={0.9} />
-          <path d={`M ${a[0] - 11} ${a[1] - 11} L ${a[0] + 11} ${a[1] + 11}
-                    M ${a[0] + 11} ${a[1] - 11} L ${a[0] - 11} ${a[1] + 11}`}
-                stroke="#8f3328" strokeWidth={5} strokeLinecap="round" />
-        </g>
-      );
+      if (a) marks.push(cross(`m-${i}`, a[0] + 16, a[1] - 16, `${o.order} — ${why}`));
+    }
+    // A support that was cut, or a convoy that never ran, is marked on the unit
+    // that gave the order rather than on a destination it never had.
+    const failed = o.ok === false || (o.outcomes.length > 0 && !o.outcomes.includes("OK"));
+    if (!mv && failed) {
+      const a = unitAnchor(o.order.split(" ")[1]);
+      if (a && !o.outcomes.includes("DISLODGED"))
+        marks.push(cross(`s-${i}`, a[0] + 16, a[1] - 16, `${o.order} — ${why}`));
     }
     if (o.outcomes.includes("DISLODGED")) {
-      const loc = o.order.split(" ")[1];
-      const a = unitAnchor(loc);
+      const a = unitAnchor(o.order.split(" ")[1]);
       if (a) marks.push(
-        <path key={`d-${i}`} style={{ pointerEvents: "none" }}
-              d={`M ${a[0] - 17} ${a[1] + 16} L ${a[0] + 17} ${a[1] - 16}`}
-              stroke="#8f3328" strokeWidth={5} strokeLinecap="round" />
+        <g key={`d-${i}`} style={{ pointerEvents: "none" }}>
+          <title>{`${o.order} — dislodged`}</title>
+          <path d={`M ${a[0] - 18} ${a[1] + 17} L ${a[0] + 18} ${a[1] - 17}`}
+                stroke="#fdfaf2" strokeWidth={8} strokeLinecap="round" />
+          <path d={`M ${a[0] - 18} ${a[1] + 17} L ${a[0] + 18} ${a[1] - 17}`}
+                stroke="#8f3328" strokeWidth={4.4} strokeLinecap="round" />
+        </g>
       );
     }
   });
@@ -171,7 +192,8 @@ export default function Board({
   entry: Entry;
   highlights: Set<string>;
   orders: string[];
-  results?: { order: string; outcomes: string[] }[] | null;
+  /** Only passed while reviewing the phase that just resolved. */
+  results?: { order: string; outcomes: string[]; ok?: boolean }[] | null;
   onProvince: (p: string, phase: "down" | "up") => void;
   viewBox?: string;
 }) {
@@ -256,7 +278,6 @@ export default function Board({
       )}
 
       {orders.map((o, i) => <DraftedOrder key={`o-${i}`} order={o} colour={TOKEN[me]} />)}
-      {results && results.length > 0 && <FailureMarks result={results} />}
 
       {Object.entries(state.powers).flatMap(([power, p]) =>
         p.units.map((u) => {
@@ -268,6 +289,8 @@ export default function Board({
           ) : null;
         })
       )}
+
+      {results && results.length > 0 && <FailureMarks result={results} />}
 
       <rect x={0} y={0} width={MAP.viewBox[2]} height={MAP.viewBox[3]} fill="url(#vignette)"
             pointerEvents="none" />
