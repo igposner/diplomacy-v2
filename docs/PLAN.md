@@ -329,26 +329,80 @@ One caveat: the benchmark's value comes from comparing models, so DeepSeek lower
 
 ---
 
-## 7. Roadmap
+## 7. Where the build stands (2026-09-14, commit 658a25f)
+
+About 2,100 lines across backend and frontend, plus 1,000 lines of design-canvas
+generators. Everything below is committed on `main` and verified by `backend/check.sh`
+(160 DATC rule cases, the asserted map build, a full scripted game) plus
+`npm run test:orders` and a TypeScript check.
+
+**Standing up and working**
+
+- **Rules.** The `diplomacy` engine adjudicates; `engine/facade.py` is the only module
+  that touches it. A typed order grammar round-trips every shape including coasts.
+- **Map.** `scripts/build_map.py` generates the board data from the package SVG and
+  asserts all seven silent traps. A bad build now fails loudly.
+- **Board.** Renders live state. Orders are given by clicking, following Backstabbr:
+  click unit then destination to move, twice to hold, S then two tiles to support,
+  C then origin and landing to convoy. Every option comes from the engine's legal-order
+  list, so an illegal order cannot be constructed.
+- **Press.** Send and read messages, with per-power visibility enforced server-side.
+- **API.** Seven endpoints: health, create game, read state, submit orders, process a
+  phase, read and send press.
+
+**Known gaps, in the order they hurt**
+
+1. **Retreat and adjustment phases cannot be ordered by clicking.** They use a
+   different syntax (`A BUD B`, `WAIVE`, `A BUR R PAR`, `A BUR D`) that the board's
+   parser does not handle. You are locked out of your own builds every Winter, which
+   makes a full human game impossible today. This is the one true blocker.
+2. **Nothing persists.** Games live in a dict; a server restart loses everything.
+3. **No adjudication feedback.** After a phase resolves you cannot see which orders
+   bounced, were cut or dislodged. The engine returns all of it; the UI discards it.
+4. **No lobby.** The human is hard-coded to France against six scripted bots.
+5. **No agents.** Every opponent is `GreedyBot`. Nobody answers your press.
+
+## 8. Roadmap
 
 Each milestone has an acceptance test; do not start the next until it passes.
 
-| # | Milestone | Deliverables | Acceptance |
-|---|---|---|---|
-| M0 | Reset & scaffold | New layout, `uv`/`pnpm`, ruff/eslint, CI running the DATC gate and a smoke game with scripted bots, `make dev` starts both servers | CI green on a fresh clone |
-| M1 | Map data + static map | `build_map.py` → `standard.json` handling the seven extraction defects above; React map with all layers except orders; pan/zoom; fixtures | Renders 1901 board and 5 mid-game fixtures; snapshots pass; every province resolves to an engine name; a rendered board is compared against the package's own `standard.svg` render before the milestone is called done |
-| M2 | Order entry | State machine, all order types, all phases, order list, hotkeys, touch | Playwright enters every order shape in section 2.4 and the engine accepts each |
-| M3 | Game loop + persistence + results | `game_runner`, SQLite, results overlay, history scrubber, lobby | Full game vs scripted bots in the browser; reload resumes |
-| M4 | LLM agents | Adapters, structured orders, personas, memory, logging, cost tracking | 7 `deepseek-flash` agents finish a headless game; invalid-order rate reported |
-| M5 | Press | All-to-all messaging, negotiation rounds, chat UI, timers, human seat | Full-press game vs 6 agents in the browser |
-| M6 | Benchmark harness | Configs, parallel runner, metrics, judge, leaderboard page, replay viewer | Benchmark v1 run and published |
-| M7 | Polish & deploy | HeuristicBot strength, multi-human lobby, hosting (backend on Fly.io/Railway, frontend on Vercel) | Shareable URL |
+| # | Milestone | Status | Deliverables | Acceptance |
+|---|---|---|---|---|
+| M0 | Reset & scaffold | **Partial** — `check.sh` runs the gates, but no CI, no lint config, no one-command dev start | New layout, `uv`/`pnpm`, ruff/eslint, CI running the DATC gate and a smoke game with scripted bots, `make dev` starts both servers | CI green on a fresh clone |
+| M1 | Map data + static map | **Done** except pan/zoom and snapshot fixtures | `build_map.py` → `standard.json` handling the seven extraction defects above; React map with all layers except orders; pan/zoom; fixtures | Renders 1901 board and 5 mid-game fixtures; snapshots pass; every province resolves to an engine name; a rendered board is compared against the package's own `standard.svg` render before the milestone is called done |
+| M2 | Order entry | **Movement done and tested**; retreat and adjustment not | State machine, all order types, all phases, order list, hotkeys, touch | Playwright enters every order shape in section 2.4 and the engine accepts each |
+| M3 | Game loop + persistence + results | Not started | `game_runner`, SQLite, results overlay, history scrubber, lobby | Full game vs scripted bots in the browser; reload resumes |
+| M4 | LLM agents | Not started | Adapters, structured orders, personas, memory, logging, cost tracking | 7 `deepseek-flash` agents finish a headless game; invalid-order rate reported |
+| M5 | Press | **Partial** — messaging and privacy work; no rounds, timers or agent replies | All-to-all messaging, negotiation rounds, chat UI, timers, human seat | Full-press game vs 6 agents in the browser |
+| M6 | Benchmark harness | Not started | Configs, parallel runner, metrics, judge, leaderboard page, replay viewer | Benchmark v1 run and published |
+| M7 | Polish & deploy | Not started | HeuristicBot strength, multi-human lobby, hosting (backend on Fly.io/Railway, frontend on Vercel) | Shareable URL |
 
-Working in Claude Code sessions, M0–M3 are roughly two to three weeks, M4–M6 another three to four.
+### What happens next, in order
+
+The board is good enough to stop working on. The next four steps are what turn it from
+a board into a game, and they are sequenced by what blocks what.
+
+1. **Finish order entry** (closes M2). Teach the board the retreat and adjustment
+   syntax and reuse the same state machine: dislodged units offer retreat squares and
+   a disband, empty home centres offer army or fleet, surplus units offer disband, and
+   unused builds waive. Without this a human cannot play past the first Winter.
+2. **Persistence and results** (the useful half of M3). SQLite behind the facade so a
+   game survives a restart, plus a results overlay showing what bounced, what was cut
+   and what was dislodged. The engine already returns every outcome; the UI just
+   throws it away today.
+3. **A lobby.** Pick your power and choose what holds each other seat: you, an agent,
+   or a scripted bot. This is what lets one build serve both the game and the benchmark.
+4. **Agents** (M4). The DeepSeek adapter, structured orders validated against the legal
+   set with one repair attempt, personas, per-phase memory, and cost logging. This is
+   the payoff, and the point at which press stops being a monologue.
+
+Steps 1 to 3 are the difference between a demo and a playable game. Step 4 is the
+difference between a playable game and the project's actual goal. Only after that do
+negotiation rounds (M5), the benchmark harness (M6) and hosting (M7) make sense.
 
 ---
 
-## 8. Decisions made in this plan (say so if you disagree)
+## 9. Decisions made in this plan (say so if you disagree)
 
 1. Keep the `diplomacy` engine; never write our own adjudicator.
 2. Keep Next.js/React/Tailwind; replace every existing frontend component. The visual target is
