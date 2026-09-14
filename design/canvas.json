@@ -1,0 +1,92 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "Game screen"
+    },
+    {
+      "file": "OrderStates.dc.html",
+      "x": 1540,
+      "y": 0,
+      "w": 1464,
+      "h": 1060,
+      "title": "Order entry states"
+    },
+    {
+      "file": "MapLanguage.dc.html",
+      "x": 3104,
+      "y": 0,
+      "w": 1080,
+      "h": 1000,
+      "title": "Map language"
+    },
+    {
+      "file": "Press.dc.html",
+      "x": 0,
+      "y": 1200,
+      "w": 560,
+      "h": 880,
+      "title": "Press panel",
+      "is_interactive": true
+    },
+    {
+      "file": "Lobby.dc.html",
+      "x": 660,
+      "y": 1200,
+      "w": 1180,
+      "h": 860,
+      "title": "Lobby"
+    }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -190,
+      "w": 620,
+      "text": "Classic board, dark chrome.\nThe board matches the reference you sent: flat saturated fills, white stars for centres, pale sea, thin white borders between provinces. Colours come from Radix Colors (MIT), one hue per power.\nType is Newsreader for anything diplomatic, Barlow for controls, IBM Plex Mono for order strings.\nBoard is Fall 1902. France is convoying into London while England looks north — read the England thread."
+    },
+    {
+      "id": "note-states",
+      "x": 1540,
+      "y": -190,
+      "w": 620,
+      "text": "The six states are the whole interaction model, movement through adjustment.\nEvery clickable target is generated from the engine's own legal-order list, so an illegal order cannot be constructed. This is what v1 was missing."
+    },
+    {
+      "id": "note-lang",
+      "x": 3104,
+      "y": -190,
+      "w": 560,
+      "text": "One deliberate change from PLAN.md: support arrows are drawn supporter → destination with a hollow head, not supporter → origin. It reads as intent and matches Backstabbr and webDiplomacy. Say if you prefer the original.\nFailures are drawn in near-black ink so they never collide with Austria's red."
+    },
+    {
+      "id": "note-press",
+      "x": 0,
+      "y": 2090,
+      "w": 560,
+      "text": "This panel is clickable — pick a power on the left and the thread changes. Seven real negotiations, mid-game.\nThe game screen uses a compressed chip version of the same thing to save width."
+    },
+    {
+      "id": "note-lobby",
+      "x": 660,
+      "y": 2090,
+      "w": 560,
+      "text": "Any seat can be you, an agent, or a scripted bot, which is what makes one build serve both the game and the benchmark.\nThe cost figure is real: six deepseek-flash agents over ten game-years."
+    },
+    {
+      "id": "note-open",
+      "x": 3104,
+      "y": 1060,
+      "w": 560,
+      "text": "Known gap: Austria and Italy sit next to each other and land on the same lightness, so they are the hardest pair in grayscale and for red-green colour blindness. A faint per-power hatch fill inside each province would fix it without changing the colours. Want it?"
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

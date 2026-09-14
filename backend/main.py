@@ -1,126 +1,135 @@
+"""Diplomacy API. Thin: every rules decision belongs to engine.facade."""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from importlib.metadata import version as pkg_version
-from pydantic import TypeAdapter, ValidationError
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-from connection_manager import ConnectionManager
-from game_manager import create_game, get_game
-from schemas import (
-    CreateGameRequest,
-    ClientMessage,
-    StateMessage,
-    ErrorMessage,
-    GameOverMessage,
-)
+from bots.greedy_bot import GreedyBot
+from engine.facade import POWERS, Facade
 
 app = FastAPI(title="Diplomacy API")
-ws_manager = ConnectionManager()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-_VALID_POWERS = {"AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"}
-_client_msg_adapter: TypeAdapter[ClientMessage] = TypeAdapter(ClientMessage)
+GAMES: dict[str, Facade] = {}
+# Press, per game. Kept in memory for now; it moves to SQLite with persistence.
+MESSAGES: dict[str, list[dict]] = {}
+
+
+class NewGame(BaseModel):
+    power: str = "FRANCE"
+    advance: int = 0          # play this many phases with scripted bots first
+
+
+class Orders(BaseModel):
+    power: str
+    orders: list[str]
+
+
+class Message(BaseModel):
+    sender: str
+    to: str          # a power name, or GLOBAL
+    text: str
+
+
+def get(game_id: str) -> Facade:
+    f = GAMES.get(game_id)
+    if f is None:
+        raise HTTPException(404, f"no game {game_id}")
+    return f
 
 
 @app.get("/api/health")
 async def health():
-    try:
-        diplomacy_version = pkg_version("diplomacy")
-    except Exception:
-        diplomacy_version = "unknown"
-    return {"status": "ok", "diplomacy_version": diplomacy_version}
+    return {"status": "ok", "games": len(GAMES)}
 
 
 @app.post("/api/games")
-async def create_game_endpoint(body: CreateGameRequest):
-    human = body.human_power.upper()
-    if human not in _VALID_POWERS:
-        raise HTTPException(status_code=400, detail=f"Invalid human_power: {body.human_power!r}")
-
-    ai = None
-    if body.ai_power:
-        ai = body.ai_power.upper()
-        if ai not in _VALID_POWERS:
-            raise HTTPException(status_code=400, detail=f"Invalid ai_power: {body.ai_power!r}")
-        if ai == human:
-            raise HTTPException(status_code=400, detail="human_power and ai_power must be different")
-
-    game_id = create_game(human, ai)
-    return {"game_id": game_id}
-
-
-def _get_winners(game) -> list[str]:
-    try:
-        outcome = game.outcome
-        if outcome:
-            return list(outcome)
-    except AttributeError:
-        pass
-    max_centers = max((len(p.centers) for p in game.powers.values()), default=0)
-    return [name for name, p in game.powers.items() if len(p.centers) == max_centers]
+async def new_game(body: NewGame):
+    power = body.power.upper()
+    if power not in POWERS:
+        raise HTTPException(400, f"invalid power {body.power!r}")
+    f = Facade()
+    bots = {p: GreedyBot(p) for p in POWERS}
+    for _ in range(max(0, body.advance)):
+        if f.done:
+            break
+        for p in POWERS:
+            locs = f.legal_orders(p)
+            if locs:
+                f.game.set_orders(p, await bots[p].decide_orders(f.game))
+        f.process()
+    gid = uuid.uuid4().hex[:8]
+    GAMES[gid] = f
+    return {"game_id": gid, "power": power, "phase": f.phase}
 
 
-@app.websocket("/api/ws/{game_id}")
-async def websocket_endpoint(websocket: WebSocket, game_id: str):
-    gm = get_game(game_id)
-    if gm is None:
-        await websocket.close(code=4004)
-        return
+@app.get("/api/games/{game_id}/state")
+async def state(game_id: str, power: str | None = None):
+    return get(game_id).state(power.upper() if power else None)
 
-    await ws_manager.connect(websocket, game_id)
-    await ws_manager.send_to(websocket, StateMessage(data=gm.state_for_frontend()).model_dump())
 
-    try:
-        while True:
-            raw = await websocket.receive_json()
+@app.post("/api/games/{game_id}/orders")
+async def orders(game_id: str, body: Orders):
+    f = get(game_id)
+    bad = f.validate(body.power.upper(), body.orders)
+    if bad:
+        raise HTTPException(400, {"message": "illegal orders", "orders": bad})
+    f.submit(body.power.upper(), body.orders)
+    return {"accepted": body.orders}
 
-            try:
-                msg = _client_msg_adapter.validate_python(raw)
-            except ValidationError as exc:
-                await ws_manager.send_to(
-                    websocket,
-                    ErrorMessage(message=f"Invalid message: {exc.error_count()} error(s)").model_dump(),
-                )
-                continue
 
-            if msg.type == "get_state":
-                await ws_manager.send_to(
-                    websocket, StateMessage(data=gm.state_for_frontend()).model_dump()
-                )
+@app.get("/api/games/{game_id}/messages")
+async def read_messages(game_id: str, power: str):
+    """Only what this power can see: its own channels and anything global."""
+    get(game_id)
+    me = power.upper()
+    return [
+        m for m in MESSAGES.get(game_id, [])
+        if m["to"] == "GLOBAL" or m["sender"] == me or m["to"] == me
+    ]
 
-            elif msg.type == "submit_orders":
-                orderable_locs = gm.game.get_orderable_locations(gm.human_power)
-                all_possible = gm.game.get_all_possible_orders()
-                valid_set = {o for loc in orderable_locs for o in all_possible.get(loc, [])}
-                invalid = [o for o in msg.orders if o not in valid_set]
-                if invalid:
-                    await ws_manager.send_to(
-                        websocket,
-                        ErrorMessage(message=f"Invalid orders rejected: {invalid}").model_dump(),
-                    )
-                else:
-                    gm.submit_human_orders(msg.orders)
-                    await ws_manager.send_to(
-                        websocket, StateMessage(data=gm.state_for_frontend()).model_dump()
-                    )
 
-            elif msg.type == "advance_phase":
-                await gm.advance_phase()
-                await ws_manager.send_to(
-                    websocket, StateMessage(data=gm.state_for_frontend()).model_dump()
-                )
-                if gm.game.is_game_done:
-                    await ws_manager.send_to(
-                        websocket,
-                        GameOverMessage(winners=_get_winners(gm.game)).model_dump(),
-                    )
+@app.post("/api/games/{game_id}/messages")
+async def send_message(game_id: str, body: Message):
+    f = get(game_id)
+    sender, to = body.sender.upper(), body.to.upper()
+    if sender not in POWERS:
+        raise HTTPException(400, f"invalid sender {body.sender!r}")
+    if to != "GLOBAL" and to not in POWERS:
+        raise HTTPException(400, f"invalid recipient {body.to!r}")
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "empty message")
+    m = {"sender": sender, "to": to, "text": text[:2000], "phase": f.phase,
+         "at": datetime.now(timezone.utc).isoformat()}
+    MESSAGES.setdefault(game_id, []).append(m)
+    return m
 
-            elif msg.type == "send_message":
-                reply = await gm.send_message_to_ai(msg.text)
-                await ws_manager.send_to(
-                    websocket,
-                    {"type": "message", "from": "AI", "text": reply},
-                )
 
-    except WebSocketDisconnect:
-        ws_manager.disconnect(game_id)
+@app.post("/api/games/{game_id}/process")
+async def process(game_id: str):
+    f = get(game_id)
+    bots = {p: GreedyBot(p) for p in POWERS}
+    for p in POWERS:
+        if f.legal_orders(p) and not f.game.powers[p].orders:
+            f.game.set_orders(p, await bots[p].decide_orders(f.game))
+    r = f.process()
+    return {
+        "phase": r.phase,
+        "next": f.phase,
+        "centerChanges": r.center_changes,
+        "orders": [{"power": o.power, "order": o.order, "english": o.english,
+                    "outcomes": o.outcomes, "ok": o.ok} for o in r.orders],
+    }

@@ -1,0 +1,17 @@
+.DS_Store
+*.log
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# node / next
+node_modules/
+.next/

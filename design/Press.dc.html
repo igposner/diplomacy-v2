@@ -1,0 +1,183 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&amp;family=Barlow:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
+  <style>
+  *{box-sizing:border-box}
+  body{margin:0}
+  a{color:#C8912F} a:hover{color:#E7B85E}
+  
+.rail{display:flex;flex-direction:column;gap:2px;padding:8px}
+.chan{display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid transparent;
+  border-radius:5px;cursor:pointer;background:transparent;width:100%;text-align:left}
+.chan:hover{background:#1F2833}
+.bubble{border-radius:8px;padding:9px 12px;font:400 12.5px/1.58 "Barlow","Helvetica Neue",Arial,sans-serif;max-width:300px}
+.send{border:1px solid #8c6621;background:#C8912F;color:#211703;font:600 10.5px/1 "Barlow","Helvetica Neue",Arial,sans-serif;
+  letter-spacing:.7px;text-transform:uppercase;padding:9px 15px;border-radius:4px;cursor:pointer}
+
+  </style>
+</helmet>
+<div style="width:560px;height:880px;background:#0F141B;display:flex;flex-direction:column;
+     font-family:"Barlow","Helvetica Neue",Arial,sans-serif;color:#E7ECF2;overflow:hidden">
+  <div style="flex:none;padding:13px 15px;border-bottom:1px solid #2B3644">
+    <div style="display:flex;align-items:baseline;gap:9px">
+      <span style="font:500 17px/1 "Newsreader",Georgia,"Times New Roman",serif;color:#E7ECF2">Press</span>
+      <span style="font:500 9.5px/1 "Barlow","Helvetica Neue",Arial,sans-serif;letter-spacing:1.3px;text-transform:uppercase;color:#C8912F">Fall 1902</span>
+      <span style="flex:1"></span>
+      <span style="font:400 10.5px/1 "IBM Plex Mono",Menlo,Consolas,monospace;color:#69768A">round 2 of 3</span>
+    </div>
+    <div style="font:400 11px/1.5 "Barlow","Helvetica Neue",Arial,sans-serif;color:#69768A;margin-top:5px">
+      Every power can write to every other. Nothing you send is visible to anyone else.</div>
+  </div>
+  <div style="flex:1;display:flex;min-height:0">
+    <div style="width:172px;flex:none;border-right:1px solid #2B3644;display:flex;flex-direction:column;min-height:0">
+      <div class="rail">
+        <sc-for list="{{chans}}" as="c" hint-placeholder-count="7">
+          <button class="chan" style="background: {{c.bg}}; border-color: {{c.bd}}" onClick="{{c.pick}}">
+            <span style="width:8px;height:8px;border-radius:50%;flex:none;background: {{c.dot}}"></span>
+            <span style="font:500 11.5px/1 "Barlow","Helvetica Neue",Arial,sans-serif;letter-spacing:.2px;color: {{c.fg}}">{{c.name}}</span>
+            <sc-if value="{{c.unread}}" hint-placeholder-val="{{true}}">
+              <span style="margin-left:auto;min-width:16px;height:16px;border-radius:8px;background:#C8912F;
+                color:#22190A;font:600 9.5px/16px "Barlow","Helvetica Neue",Arial,sans-serif;text-align:center;flex:none;padding:0 4px">{{c.unread}}</span>
+            </sc-if>
+          </button>
+        </sc-for>
+      </div>
+      <div style="flex:1"></div>
+      <div style="padding:11px 12px;border-top:1px solid #2B3644;font:400 10px/1.5 "Barlow","Helvetica Neue",Arial,sans-serif;color:#69768A">
+        Agents reply between rounds. Press <span style="color:#9AA8B8">Ready</span> to end the round early.</div>
+    </div>
+
+    <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+      <div style="flex:none;padding:11px 14px;border-bottom:1px solid #2B3644;display:flex;align-items:center;gap:9px">
+        <span style="width:10px;height:10px;border-radius:2px;flex:none;background: {{headDot}}"></span>
+        <span style="font:500 14px/1.2 "Newsreader",Georgia,"Times New Roman",serif;color:#E7ECF2">{{headName}}</span>
+        <span style="font:400 10px/1 "IBM Plex Mono",Menlo,Consolas,monospace;color:#69768A">{{headMeta}}</span>
+      </div>
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:15px 14px;display:flex;flex-direction:column;gap:15px">
+        <sc-for list="{{msgs}}" as="m" hint-placeholder-count="3">
+          <div style="display:flex;flex-direction:column;gap:4px;align-items: {{m.align}}">
+            <div style="display:flex;gap:7px;align-items:baseline">
+              <span style="font:500 11.5px/1 "Newsreader",Georgia,"Times New Roman",serif;letter-spacing:.3px;color: {{m.nameCol}}">{{m.who}}</span>
+              <span style="font:400 9.5px/1 "IBM Plex Mono",Menlo,Consolas,monospace;color:#69768A">{{m.phase}}</span>
+            </div>
+            <div class="bubble" style="background: {{m.bg}}; border: 1px solid {{m.bd}}; color:#d6dde5">{{m.text}}</div>
+          </div>
+        </sc-for>
+        <div style="display:flex;gap:7px;align-items:center;font:400 10.5px/1 "Barlow","Helvetica Neue",Arial,sans-serif;color:#69768A;font-style:italic">
+          <span style="display:flex;gap:3px">
+            <span style="width:4px;height:4px;border-radius:50%;background:#69768A"></span>
+            <span style="width:4px;height:4px;border-radius:50%;background:#69768A;opacity:.6"></span>
+            <span style="width:4px;height:4px;border-radius:50%;background:#69768A;opacity:.3"></span>
+          </span>{{typing}}
+        </div>
+      </div>
+      <div style="flex:none;border-top:1px solid #2B3644;padding:11px 14px 14px">
+        <div style="background:#1F2833;border:1px solid #2B3644;border-radius:5px;padding:10px 11px;
+             font:400 12.5px/1.55 "Barlow","Helvetica Neue",Arial,sans-serif;color:#69768A;min-height:58px">{{placeholder}}</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:9px">
+          <span style="font:400 9.5px/1 "Barlow","Helvetica Neue",Arial,sans-serif;color:#69768A">Shift + Enter for a new line</span>
+          <span style="flex:1"></span>
+          <button class="send">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":560,"height":880}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var C = {"AUSTRIA": "#B03A3C", "ENGLAND": "#23417A", "FRANCE": "#5FA8D3", "GERMANY": "#4A4A44", "ITALY": "#3B8E56", "RUSSIA": "#8A54B0", "TURKEY": "#C9A227"};
+    var HI = "#E7ECF2", MID = "#9AA8B8", LO = "#69768A", CH2 = "#1F2833", CH3 = "#2B3644", CH4 = "#3A4757";
+    var THREADS = {
+      GLOBAL: { name: "Global", meta: "all seven powers", typing: "Austria is drafting a reply",
+        placeholder: "Write to every power at once\u2026", msgs: [
+        { who: "Italy", pw: "ITALY", phase: "Spring 1902", mine: false,
+          text: "Let the record show that Austria moved first in the Tyrol. I acted in self\u2011defence and I will say so again at the end of this game." },
+        { who: "Austria", pw: "AUSTRIA", phase: "Spring 1902", mine: false,
+          text: "The record will also show that Italy had three fleets and no enemies to the south. Draw your own conclusions." }
+      ]},
+      ENGLAND: { name: "England", meta: "4 centres", typing: "England is drafting a reply",
+        placeholder: "Reply to England\u2026", msgs: [
+        { who: "England", pw: "ENGLAND", phase: "Spring 1902", mine: false,
+          text: "Your fleet in the Channel is a dagger pointed at London. Withdraw it and I leave Belgium alone all year." },
+        { who: "You", pw: "FRANCE", phase: "Spring 1902", mine: true,
+          text: "The Channel is a road, not a dagger. I have no designs on your island \u2014 but I will not give up the sea while Germany builds in Kiel." },
+        { who: "England", pw: "ENGLAND", phase: "Fall 1902", mine: false,
+          text: "Then we understand each other. I am moving north to Norway. Do not make me regret turning my back." }
+      ]},
+      GERMANY: { name: "Germany", meta: "6 centres \u00b7 leading", typing: "Germany is drafting a reply",
+        placeholder: "Reply to Germany\u2026", msgs: [
+        { who: "Germany", pw: "GERMANY", phase: "Fall 1902", mine: false,
+          text: "Munich is mine and will stay mine. But I have no quarrel in the west if you look to Iberia instead. Say the word and Burgundy stays quiet." },
+        { who: "You", pw: "FRANCE", phase: "Fall 1902", mine: true,
+          text: "I will consider it. Move your army out of Ruhr first and I will believe you." }
+      ]},
+      ITALY: { name: "Italy", meta: "4 centres", typing: "Italy is drafting a reply",
+        placeholder: "Reply to Italy\u2026", msgs: [
+        { who: "Italy", pw: "ITALY", phase: "Fall 1902", mine: false,
+          text: "Marseilles is undefended and we both know it. I would rather have your friendship than your coastline, but I would like one of the two." }
+      ]},
+      AUSTRIA: { name: "Austria", meta: "3 centres \u00b7 struggling", typing: "Austria is drafting a reply",
+        placeholder: "Reply to Austria\u2026", msgs: [
+        { who: "Austria", pw: "AUSTRIA", phase: "Fall 1902", mine: false,
+          text: "I am down to three centres and Italy is in Trieste. I cannot help you in the west, but I can make Germany look east if you make it worth my while." }
+      ]},
+      RUSSIA: { name: "Russia", meta: "6 centres", typing: "Russia is drafting a reply",
+        placeholder: "Reply to Russia\u2026", msgs: [
+        { who: "Russia", pw: "RUSSIA", phase: "Spring 1902", mine: false,
+          text: "We are far apart, which is the best basis for a friendship. Keep Germany busy and I will take Scandinavia off his hands." },
+        { who: "You", pw: "FRANCE", phase: "Fall 1902", mine: true,
+          text: "Agreed. I am pressing Munich this turn. Do not let him move a single unit back east." }
+      ]},
+      TURKEY: { name: "Turkey", meta: "3 centres", typing: "Turkey is drafting a reply",
+        placeholder: "Reply to Turkey\u2026", msgs: [
+        { who: "Turkey", pw: "TURKEY", phase: "Spring 1901", mine: false,
+          text: "We have nothing to discuss yet, and that suits me. Write again when one of us is winning." }
+      ]}
+    };
+    var ORDER = [
+      ["GLOBAL", null, 0], ["ENGLAND", "ENGLAND", 1], ["GERMANY", "GERMANY", 2],
+      ["ITALY", "ITALY", 0], ["AUSTRIA", "AUSTRIA", 1], ["RUSSIA", "RUSSIA", 0], ["TURKEY", "TURKEY", 0]
+    ];
+    var self = this;
+    var cur = (this.state && this.state.cur) ? this.state.cur : "ENGLAND";
+    var t = THREADS[cur];
+    var chans = ORDER.map(function (row) {
+      var id = row[0], pw = row[1], unread = row[2];
+      var on = id === cur;
+      return {
+        id: id, name: THREADS[id].name, unread: (on ? 0 : unread),
+        dot: pw ? C[pw] : MID,
+        bg: on ? CH3 : "transparent",
+        bd: on ? "#C8912F" : "transparent",
+        fg: on ? HI : MID,
+        pick: function () { self.setState({ cur: id }); }
+      };
+    });
+    var msgs = t.msgs.map(function (m) {
+      return {
+        who: m.who, phase: m.phase, text: m.text,
+        align: m.mine ? "flex-end" : "flex-start",
+        nameCol: m.mine ? "#9cc7e1" : C[m.pw],
+        bg: m.mine ? "#293c4d" : CH2,
+        bd: m.mine ? "#364f63" : CH3
+      };
+    });
+    return {
+      chans: chans, msgs: msgs, headName: t.name, headMeta: t.meta,
+      headDot: cur === "GLOBAL" ? MID : C[cur],
+      typing: t.typing, placeholder: t.placeholder
+    };
+  }
+}
+</script>
+</body>
+</html>
