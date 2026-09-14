@@ -7,3 +7,5 @@ echo "--- map build (7 silent traps asserted) ---"
 ./venv/bin/python scripts/build_map.py
 echo "--- full game, 7 scripted bots ---"
 ./venv/bin/python tests/test_smoke.py
+echo "--- persistence across restarts ---"
+./venv/bin/python tests/test_persistence.py

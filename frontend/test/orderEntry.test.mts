@@ -1,7 +1,7 @@
 /* Covers every order shape the board can produce, including the ones a given
    position may not offer (convoy, two-coast destinations). Run: npm run test:orders */
 import assert from "node:assert/strict";
-import { indexLegal, click, targets, type Entry } from "../src/lib/orderEntry.ts";
+import { indexLegal, click, targets, chips, type Entry } from "../src/lib/orderEntry.ts";
 
 const legal = {
   PAR: ["A PAR H", "A PAR - BUR", "A PAR - PIC", "A PAR S A BUR", "A PAR S A BUR - MUN"],
@@ -56,13 +56,64 @@ assert.equal(s.order, "F MAR - SPA/SC"); ok("a single legal coast is chosen with
 // two legal coasts: ask
 s = click(ix, { kind: "unit", loc: "POR" }, "SPA");
 assert.equal(s.order, undefined);
-assert.equal(s.next.kind, "coast");
-assert.deepEqual((s.next as { options: { dest: string }[] }).options.map((o) => o.dest).sort(),
-                 ["SPA/NC", "SPA/SC"]); ok("two legal coasts prompt for a choice");
+assert.equal(s.next.kind, "choice");
+assert.deepEqual((s.next as { options: { order: string }[] }).options.map((o) => o.order).sort(),
+                 ["F POR - SPA/NC", "F POR - SPA/SC"]); ok("two legal coasts prompt for a choice");
 
 // highlights only ever offer legal targets
 assert.deepEqual([...targets(ix, { kind: "unit", loc: "PAR" })].sort(), ["BUR", "PAR", "PIC"]);
 assert.deepEqual([...targets(ix, { kind: "convoyInto", loc: "ENG", from: "LON" })].sort(), ["BEL", "BRE"]);
 ok("highlights are exactly the legal targets");
+
+/* ---------------- retreat phase ---------------- */
+const rIx = indexLegal({
+  BUR: ["A BUR D", "A BUR R BEL", "A BUR R GAS", "A BUR R PAR"],
+});
+s = click(rIx, idle, "BUR");
+assert.deepEqual(s.next, { kind: "unit", loc: "BUR" }); ok("a dislodged unit selects");
+assert.deepEqual([...targets(rIx, { kind: "unit", loc: "BUR" })].sort(), ["BEL", "GAS", "PAR"]);
+ok("retreat squares highlight, and only the legal ones");
+s = click(rIx, { kind: "unit", loc: "BUR" }, "PAR");
+assert.equal(s.order, "A BUR R PAR"); ok("clicking a retreat square orders the retreat");
+s = click(rIx, { kind: "unit", loc: "BUR" }, "MUN");
+assert.equal(s.order, undefined); ok("retreating into the attacker is not offered");
+assert.deepEqual(chips(rIx, { kind: "unit", loc: "BUR" }), [{ label: "Disband", order: "A BUR D" }]);
+ok("a dislodged unit offers disband");
+
+/* ---------------- builds ---------------- */
+const bIx = indexLegal({
+  SEV: ["A SEV B", "F SEV B", "WAIVE"],
+  STP: ["A STP B", "F STP/NC B", "F STP/SC B", "WAIVE"],
+  WAR: ["A WAR B", "WAIVE"],
+});
+assert.deepEqual([...targets(bIx, idle)].sort(), ["SEV", "STP", "WAR"]);
+ok("buildable home centres highlight with nothing selected");
+s = click(bIx, idle, "WAR");
+assert.equal(s.next.kind, "choice");
+assert.deepEqual((s.next as { options: { label: string }[] }).options.map((o) => o.label), ["Army"]);
+ok("an inland centre offers an army only");
+s = click(bIx, idle, "SEV");
+assert.deepEqual((s.next as { options: { label: string }[] }).options.map((o) => o.label),
+                 ["Army", "Fleet"]); ok("a coastal centre offers both");
+s = click(bIx, idle, "STP");
+assert.deepEqual((s.next as { options: { label: string }[] }).options.map((o) => o.label),
+                 ["Army", "Fleet (north coast)", "Fleet (south coast)"]);
+ok("a two-coast centre names each coast");
+assert.deepEqual(chips(bIx, idle), [{ label: "Waive a build", order: "WAIVE" }]);
+ok("an unused build can be waived");
+// regression: a buildable centre is also an orderable location, so a naive
+// "select on press" hijacked it and showed the movement prompt instead.
+assert.equal(click(bIx, idle, "SEV").next.kind, "choice");
+assert.notEqual(click(bIx, idle, "SEV").next.kind, "unit");
+ok("a buildable centre prompts to build, never selects as a unit");
+
+/* ---------------- removals ---------------- */
+const dIx = indexLegal({ CON: ["F CON D"], MOS: ["A MOS D"] });
+s = click(dIx, idle, "CON");
+assert.deepEqual(s.next, { kind: "unit", loc: "CON" });
+assert.equal(s.order, undefined); ok("removing takes two steps, never one stray click");
+assert.deepEqual(chips(dIx, { kind: "unit", loc: "CON" }), [{ label: "Disband", order: "F CON D" }]);
+ok("a surplus unit offers disband");
+assert.equal(chips(dIx, idle).length, 0); ok("no waive is offered when none is legal");
 
 console.log(`\n${n} checks passed`);

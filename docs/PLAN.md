@@ -352,13 +352,15 @@ generators. Everything below is committed on `main` and verified by `backend/che
 
 **Known gaps, in the order they hurt**
 
-1. **Retreat and adjustment phases cannot be ordered by clicking.** They use a
-   different syntax (`A BUD B`, `WAIVE`, `A BUR R PAR`, `A BUR D`) that the board's
-   parser does not handle. You are locked out of your own builds every Winter, which
-   makes a full human game impossible today. This is the one true blocker.
-2. **Nothing persists.** Games live in a dict; a server restart loses everything.
-3. **No adjudication feedback.** After a phase resolves you cannot see which orders
-   bounced, were cut or dislodged. The engine returns all of it; the UI discards it.
+1. ~~Retreat and adjustment phases cannot be ordered by clicking.~~ **Done.** The
+   board now covers every phase: retreat squares and disband, builds by army or fleet
+   with each coast named, removals, and waive.
+2. ~~Nothing persists.~~ **Done.** SQLite behind the facade. A game survives a process
+   restart with its pending orders and press intact, and the browser resumes the game
+   you were in rather than starting a new one.
+3. ~~No adjudication feedback.~~ **Done.** The phase that just resolved is shown as a
+   list of failures with the engine's reasons, plus crosses on bounced destinations and
+   strikes through dislodged units, and a note of which centres changed hands.
 4. **No lobby.** The human is hard-coded to France against six scripted bots.
 5. **No agents.** Every opponent is `GreedyBot`. Nobody answers your press.
 
@@ -370,8 +372,8 @@ Each milestone has an acceptance test; do not start the next until it passes.
 |---|---|---|---|---|
 | M0 | Reset & scaffold | **Partial** — `check.sh` runs the gates, but no CI, no lint config, no one-command dev start | New layout, `uv`/`pnpm`, ruff/eslint, CI running the DATC gate and a smoke game with scripted bots, `make dev` starts both servers | CI green on a fresh clone |
 | M1 | Map data + static map | **Done** except pan/zoom and snapshot fixtures | `build_map.py` → `standard.json` handling the seven extraction defects above; React map with all layers except orders; pan/zoom; fixtures | Renders 1901 board and 5 mid-game fixtures; snapshots pass; every province resolves to an engine name; a rendered board is compared against the package's own `standard.svg` render before the milestone is called done |
-| M2 | Order entry | **Movement done and tested**; retreat and adjustment not | State machine, all order types, all phases, order list, hotkeys, touch | Playwright enters every order shape in section 2.4 and the engine accepts each |
-| M3 | Game loop + persistence + results | Not started | `game_runner`, SQLite, results overlay, history scrubber, lobby | Full game vs scripted bots in the browser; reload resumes |
+| M2 | Order entry | **Done** — every phase, 24 tests | State machine, all order types, all phases, order list, hotkeys, touch | Playwright enters every order shape in section 2.4 and the engine accepts each |
+| M3 | Game loop + persistence + results | **Partial** — SQLite and the results overlay are in; lobby and history scrubber are not | `game_runner`, SQLite, results overlay, history scrubber, lobby | Full game vs scripted bots in the browser; reload resumes |
 | M4 | LLM agents | Not started | Adapters, structured orders, personas, memory, logging, cost tracking | 7 `deepseek-flash` agents finish a headless game; invalid-order rate reported |
 | M5 | Press | **Partial** — messaging and privacy work; no rounds, timers or agent replies | All-to-all messaging, negotiation rounds, chat UI, timers, human seat | Full-press game vs 6 agents in the browser |
 | M6 | Benchmark harness | Not started | Configs, parallel runner, metrics, judge, leaderboard page, replay viewer | Benchmark v1 run and published |
@@ -382,22 +384,17 @@ Each milestone has an acceptance test; do not start the next until it passes.
 The board is good enough to stop working on. The next four steps are what turn it from
 a board into a game, and they are sequenced by what blocks what.
 
-1. **Finish order entry** (closes M2). Teach the board the retreat and adjustment
-   syntax and reuse the same state machine: dislodged units offer retreat squares and
-   a disband, empty home centres offer army or fleet, surplus units offer disband, and
-   unused builds waive. Without this a human cannot play past the first Winter.
-2. **Persistence and results** (the useful half of M3). SQLite behind the facade so a
-   game survives a restart, plus a results overlay showing what bounced, what was cut
-   and what was dislodged. The engine already returns every outcome; the UI just
-   throws it away today.
-3. **A lobby.** Pick your power and choose what holds each other seat: you, an agent,
+1. ~~Finish order entry~~ and ~~persistence and results~~ are **done**; see the status
+   above. A human can now play a game through to a Winter build and come back to it
+   after a restart.
+2. **A lobby.** Pick your power and choose what holds each other seat: you, an agent,
    or a scripted bot. This is what lets one build serve both the game and the benchmark.
-4. **Agents** (M4). The DeepSeek adapter, structured orders validated against the legal
+3. **Agents** (M4). The DeepSeek adapter, structured orders validated against the legal
    set with one repair attempt, personas, per-phase memory, and cost logging. This is
    the payoff, and the point at which press stops being a monologue.
 
-Steps 1 to 3 are the difference between a demo and a playable game. Step 4 is the
-difference between a playable game and the project's actual goal. Only after that do
+The lobby is the last thing between this and a game you can actually sit down to.
+Agents are the difference between a playable game and the project's actual goal. Only after that do
 negotiation rounds (M5), the benchmark harness (M6) and hosting (M7) make sense.
 
 ---

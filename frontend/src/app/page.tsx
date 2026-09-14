@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Board, { type BoardState } from "@/components/Board";
 import OrdersPanel from "@/components/OrdersPanel";
 import PressPanel, { type Press } from "@/components/PressPanel";
-import { click, hint, indexLegal, targets, type Entry } from "@/lib/orderEntry";
+import ResultsPanel, { type PhaseResult } from "@/components/ResultsPanel";
+import { chips, click, hint, indexLegal, targets, type Entry } from "@/lib/orderEntry";
 import { BORDER_INK, FILL, LABEL_INK, PARCHMENT, PARCHMENT_DARK, TOKEN, type Power } from "@/lib/map";
 
 const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
@@ -16,6 +17,7 @@ const unitOf = (order: string) => order.split(" ")[1];
 interface State extends BoardState {
   phase: string; phaseType: string; done: boolean;
   orderable?: string[]; legalOrders?: Record<string, string[]>;
+  lastResult?: PhaseResult | null;
 }
 
 export default function Page() {
@@ -27,6 +29,7 @@ export default function Page() {
   const [entry, setEntry] = useState<Entry>({ kind: "idle" });
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [note, setNote] = useState<string | null>(null);
+  const [resumed, setResumed] = useState(false);
   const consumed = useRef(false);
 
   const ix = useMemo(
@@ -43,20 +46,38 @@ export default function Page() {
     setState(s); setPress(m); setEntry({ kind: "idle" });
   }, []);
 
+  const start = useCallback(async () => {
+    const r = await fetch(`${API}/api/games`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ power: ME, advance: 6 }),
+    });
+    if (!r.ok) throw new Error(`create ${r.status}`);
+    const { game_id } = await r.json();
+    try { localStorage.setItem("diplomacy.game", game_id); } catch { /* private window */ }
+    setGameId(game_id);
+    await load(game_id);
+  }, [load]);
+
+  /* Resume rather than start over: the game you were in, else the most recent
+     one on the server, and only create a new one when there is nothing to resume. */
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(`${API}/api/games`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ power: ME, advance: 6 }),
-        });
-        if (!r.ok) throw new Error(`create ${r.status}`);
-        const { game_id } = await r.json();
-        setGameId(game_id);
-        await load(game_id);
+        let id: string | null = null;
+        try { id = localStorage.getItem("diplomacy.game"); } catch { id = null; }
+        if (id && (await fetch(`${API}/api/games/${id}/state`)).ok) {
+          setGameId(id); setResumed(true); await load(id); return;
+        }
+        const existing = await fetch(`${API}/api/games`).then((r) => r.json());
+        if (Array.isArray(existing) && existing.length) {
+          const newest = existing[0].id;
+          try { localStorage.setItem("diplomacy.game", newest); } catch { /* ignore */ }
+          setGameId(newest); setResumed(true); await load(newest); return;
+        }
+        await start();
       } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     })();
-  }, [load]);
+  }, [load, start]);
 
   // A new phase means a new set of units to order.
   useEffect(() => { setDraft({}); setNote(null); }, [state?.phase]);
@@ -78,7 +99,11 @@ export default function Page() {
   }, [entry, ix]);
 
   const record = (order: string) =>
-    setDraft((d) => ({ ...d, [unitOf(order)]: order }));
+    setDraft((d) => ({
+      // WAIVE names no unit, so give each one its own slot.
+      ...d,
+      [order === "WAIVE" ? `WAIVE-${Object.keys(d).length}` : unitOf(order)]: order,
+    }));
 
   /* Press on a unit selects it, so releasing over another province is a drag-move.
      A separate click on an already-selected unit is what orders a hold. */
@@ -86,9 +111,14 @@ export default function Page() {
     if (!ix) return;
     if (phase === "down") {
       consumed.current = false;
-      if (entry.kind === "idle" && ix.all.has(p)) {
-        setEntry({ kind: "unit", loc: p });
-        consumed.current = true;
+      // Pre-select on press so a drag becomes a move, but only where pressing
+      // would select a unit. A buildable centre must reach its own prompt.
+      if (entry.kind === "idle") {
+        const peek = click(ix, entry, p);
+        if (peek.next.kind === "unit" && !peek.order) {
+          setEntry(peek.next);
+          consumed.current = true;
+        }
       }
       return;
     }
@@ -162,12 +192,21 @@ export default function Page() {
             </div>
           ))}
           <div style={{ flex: 1 }} />
+          <button onClick={() => { setBusy(true); start().finally(() => setBusy(false)); }}
+                  disabled={busy}
+                  style={{ font: "600 9px 'EB Garamond', serif", letterSpacing: 1.2,
+                           textTransform: "uppercase", padding: "3px 8px", borderRadius: 2,
+                           border: `1.5px solid ${BORDER_INK}`, background: "transparent",
+                           color: LABEL_INK, cursor: busy ? "wait" : "pointer", marginRight: 10 }}>
+            New game
+          </button>
           <div style={{ font: "italic 600 17px 'EB Garamond', Georgia, serif", color: LABEL_INK,
                         whiteSpace: "nowrap" }}>
             {title}
             <span style={{ font: "500 8.5px 'IBM Plex Mono', monospace", letterSpacing: 1.2,
                            textTransform: "uppercase", color: "#7a6c50", marginLeft: 8 }}>
               {state?.phaseType.toLowerCase() ?? "loading"}
+              {resumed && <span style={{ marginLeft: 6, color: "#8a6414" }}>· resumed</span>}
             </span>
           </div>
         </div>
@@ -181,7 +220,8 @@ export default function Page() {
             {!error && !state && <p style={{ padding: 20, color: "#7a6c50" }}>Loading board…</p>}
             {state && (
               <Board state={state} me={ME} ix={ix} entry={entry} highlights={highlights}
-                     orders={Object.values(draft)} onProvince={onProvince} />
+                     orders={Object.values(draft)} results={state.lastResult?.orders ?? null}
+                     onProvince={onProvince} />
             )}
           </div>
         </div>
@@ -192,14 +232,14 @@ export default function Page() {
           <span style={{ font: "italic 15px 'EB Garamond', Georgia, serif", color: "#5f5540" }}>
             {ix ? hint(ix, entry) : "Loading…"}
           </span>
-          {entry.kind === "coast" && entry.options.map((o) => (
-            <button key={o.dest}
+          {ix && chips(ix, entry).map((o) => (
+            <button key={o.order}
                     onClick={() => { record(o.order); setEntry({ kind: "idle" }); }}
                     style={{ font: "600 10px 'EB Garamond', serif", letterSpacing: 1.2,
                              textTransform: "uppercase", padding: "4px 9px", borderRadius: 2,
                              border: `1.5px solid ${BORDER_INK}`, background: "#8a6414",
                              color: "#fdfaf2", cursor: "pointer" }}>
-              {o.dest}
+              {o.label}
             </button>
           ))}
           {entry.kind !== "idle" && (
@@ -234,6 +274,13 @@ export default function Page() {
                      onClear={(loc) => setDraft((d) => { const n = { ...d }; delete n[loc]; return n; })}
                      onClearAll={() => setDraft({})}
                      onSubmit={submit} onAdvance={advance} busy={busy} note={note} />
+
+        {state?.lastResult && (
+          <>
+            <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />
+            <ResultsPanel result={state.lastResult} />
+          </>
+        )}
 
         <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />
 

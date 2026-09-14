@@ -25,13 +25,26 @@ export interface LegalIndex {
   supportMove: Map<string, Map<string, Map<string, string>>>;
   /** fleet loc -> army loc -> destination -> order string */
   convoy: Map<string, Map<string, Map<string, string>>>;
+  /** retreat phase: dislodged loc -> destination -> order string */
+  retreat: Map<string, Map<string, string>>;
+  /** retreat or removal: loc -> the disband order */
+  disband: Map<string, string>;
+  /** adjustment: province -> what may be built there */
+  build: Map<string, Choice[]>;
+  /** adjustment: the waive order, when a build may be given up */
+  waive: string | null;
   /** loc -> "A" | "F" */
   kind: Map<string, UnitKind>;
   /** loc -> every legal order there, for the panel's "other" list */
   all: Map<string, string[]>;
 }
 
+export interface Choice { label: string; order: string }
+
 const RX = {
+  retreat: /^([AF]) ([A-Z]{3}(?:\/[A-Z]{2})?) R ([A-Z]{3}(?:\/[A-Z]{2})?)$/,
+  disband: /^([AF]) ([A-Z]{3}(?:\/[A-Z]{2})?) D$/,
+  build: /^([AF]) ([A-Z]{3}(?:\/[A-Z]{2})?) B$/,
   hold: /^([AF]) ([A-Z]{3}(?:\/[A-Z]{2})?) H$/,
   move: /^([AF]) ([A-Z]{3}(?:\/[A-Z]{2})?) - ([A-Z]{3}(?:\/[A-Z]{2})?)( VIA)?$/,
   supMove: /^([AF]) ([A-Z]{3}(?:\/[A-Z]{2})?) S [AF] ([A-Z]{3}(?:\/[A-Z]{2})?) - ([A-Z]{3}(?:\/[A-Z]{2})?)$/,
@@ -49,12 +62,27 @@ export function indexLegal(legal: Record<string, string[]>): LegalIndex {
   const ix: LegalIndex = {
     hold: new Map(), move: new Map(), supportHold: new Map(),
     supportMove: new Map(), convoy: new Map(), kind: new Map(), all: new Map(),
+    retreat: new Map(), disband: new Map(), build: new Map(), waive: null,
   };
+  const COAST = { NC: "north coast", SC: "south coast", EC: "east coast", WC: "west coast" } as const;
   for (const [loc, orders] of Object.entries(legal)) {
     ix.all.set(loc, orders);
     for (const o of orders) {
       let m: RegExpMatchArray | null;
-      if ((m = o.match(RX.hold))) {
+      if (o === "WAIVE") {
+        ix.waive = o;
+      } else if ((m = o.match(RX.retreat))) {
+        ix.kind.set(m[2], m[1] as UnitKind);
+        nest(ix.retreat, m[2], () => new Map()).set(m[3], o);
+      } else if ((m = o.match(RX.disband))) {
+        ix.kind.set(m[2], m[1] as UnitKind);
+        ix.disband.set(m[2], o);
+      } else if ((m = o.match(RX.build))) {
+        const coast = m[2].includes("/") ? m[2].split("/")[1] : null;
+        const label = (m[1] === "A" ? "Army" : "Fleet") +
+          (coast ? ` (${COAST[coast as keyof typeof COAST] ?? coast})` : "");
+        nest(ix.build, base(m[2]), () => []).push({ label, order: o });
+      } else if ((m = o.match(RX.hold))) {
         ix.kind.set(m[2], m[1] as UnitKind);
         ix.hold.set(m[2], o);
       } else if ((m = o.match(RX.supMove))) {
@@ -85,7 +113,7 @@ export type Entry =
   | { kind: "supportInto"; loc: string; from: string }
   | { kind: "convoyPick"; loc: string }
   | { kind: "convoyInto"; loc: string; from: string }
-  | { kind: "coast"; loc: string; options: { dest: string; order: string }[] };
+  | { kind: "choice"; loc: string; prompt: string; options: Choice[] };
 
 const base = (p: string) => p.split("/")[0];
 
@@ -95,8 +123,13 @@ export function targets(ix: LegalIndex, e: Entry): Set<string> {
   if (!ix || !e) return out;
   const add = (p: string) => out.add(base(p));
   switch (e.kind) {
+    case "idle":
+      // Nothing stands on a buildable centre, so show where a build may go.
+      ix.build.forEach((_v, loc) => add(loc));
+      break;
     case "unit":
       ix.move.get(e.loc)?.forEach((_o, d) => add(d));
+      ix.retreat.get(e.loc)?.forEach((_o, d) => add(d));
       if (ix.hold.has(e.loc)) add(e.loc);
       break;
     case "supportPick":
@@ -119,6 +152,30 @@ export function targets(ix: LegalIndex, e: Entry): Set<string> {
 
 export interface Step { next: Entry; order?: string }
 
+const COAST_NAME: Record<string, string> = {
+  NC: "north coast", SC: "south coast", EC: "east coast", WC: "west coast",
+};
+function coastPrompt(loc: string, dest: string, multi: { dest: string; order: string }[]): Entry {
+  return {
+    kind: "choice", loc, prompt: `${dest} has two coasts`,
+    options: multi.map(({ dest: d, order }) => ({
+      label: COAST_NAME[d.split("/")[1]] ?? d, order,
+    })),
+  };
+}
+
+/** Terminal actions for the current state, shown as buttons beside the hint. */
+export function chips(ix: LegalIndex, e: Entry): Choice[] {
+  if (!ix || !e) return [];
+  if (e.kind === "choice") return e.options;
+  if (e.kind === "unit") {
+    const d = ix.disband.get(e.loc);
+    return d ? [{ label: "Disband", order: d }] : [];
+  }
+  if (e.kind === "idle" && ix.waive) return [{ label: "Waive a build", order: ix.waive }];
+  return [];
+}
+
 /** One click on a province, resolved against the current state. */
 export function click(ix: LegalIndex, e: Entry, p: string): Step {
   if (!ix || !e) return { next: { kind: "idle" } };
@@ -133,18 +190,26 @@ export function click(ix: LegalIndex, e: Entry, p: string): Step {
   };
 
   switch (e.kind) {
-    case "idle":
-      return ix.all.has(p) ? { next: { kind: "unit", loc: p } } : { next: e };
+    case "idle": {
+      const opts = ix.build.get(p);
+      if (opts?.length)
+        return { next: { kind: "choice", loc: p, prompt: `Build in ${p}`, options: opts } };
+      const here = [...ix.all.keys()].find((l) => base(l) === p);
+      return here ? { next: { kind: "unit", loc: here } } : { next: e };
+    }
 
     case "unit": {
       if (p === base(e.loc)) {
         const h = ix.hold.get(e.loc);
         return h ? { next: { kind: "idle" }, order: h } : { next: e };
       }
+      const rt = hit(ix.retreat.get(e.loc));
+      if (rt && !("multi" in rt)) return { next: { kind: "idle" }, order: rt.order };
       const r = hit(ix.move.get(e.loc));
-      if (r && "multi" in r) return { next: { kind: "coast", loc: e.loc, options: r.multi! } };
+      if (r && "multi" in r) return { next: coastPrompt(e.loc, p, r.multi!) };
       if (r) return { next: { kind: "idle" }, order: r.order };
-      return ix.all.has(p) ? { next: { kind: "unit", loc: p } } : { next: { kind: "idle" } };
+      const here = [...ix.all.keys()].find((l) => base(l) === p);
+      return here ? { next: { kind: "unit", loc: here } } : { next: { kind: "idle" } };
     }
 
     case "supportPick": {
@@ -160,7 +225,7 @@ export function click(ix: LegalIndex, e: Entry, p: string): Step {
         return o ? { next: { kind: "idle" }, order: o } : { next: e };
       }
       const r = hit(ix.supportMove.get(e.loc)?.get(e.from));
-      if (r && "multi" in r) return { next: { kind: "coast", loc: e.loc, options: r.multi! } };
+      if (r && "multi" in r) return { next: coastPrompt(e.loc, p, r.multi!) };
       if (r) return { next: { kind: "idle" }, order: r.order };
       return { next: e };
     }
@@ -186,8 +251,15 @@ export function hint(ix: LegalIndex, e: Entry): string {
   if (!ix || !e) return "Loading\u2026";
   switch (e.kind) {
     case "idle":
+      if (ix.build.size) return "Click a highlighted home centre to build there.";
+      if (ix.disband.size && !ix.retreat.size) return "You are over strength. Click a unit to remove it.";
+      if (ix.retreat.size) return "Click a dislodged unit to retreat it.";
       return "Click one of your units to order it.";
     case "unit":
+      if (ix.retreat.has(e.loc))
+        return `${e.loc} was dislodged. Click a highlighted province to retreat, or disband.`;
+      if (ix.disband.has(e.loc) && !ix.hold.has(e.loc))
+        return `${e.loc} selected. Disband it, or press Esc.`;
       return `${e.loc} selected. Click a highlighted province to move, click ${base(e.loc)} again to hold, ` +
              `or press S to support` + (ix.convoy.has(e.loc) ? ", C to convoy." : ".");
     case "supportPick":
@@ -198,7 +270,7 @@ export function hint(ix: LegalIndex, e: Entry): string {
       return `Convoying with ${e.loc}. Click the army to carry.`;
     case "convoyInto":
       return `Carrying ${e.from}. Click where it lands.`;
-    case "coast":
-      return "That province has two coasts. Choose one.";
+    case "choice":
+      return `${e.prompt}. Choose one.`;
   }
 }

@@ -131,9 +131,39 @@ function DraftedOrder({ order, colour }: { order: string; colour: string }) {
   return null;
 }
 
+/* Marks for the phase that just resolved: a cross where a move bounced, a
+   strike through a unit that was dislodged. Drawn from the engine's own codes. */
+function FailureMarks({ result }: { result: { order: string; outcomes: string[] }[] }) {
+  const marks: React.ReactNode[] = [];
+  result.forEach((o, i) => {
+    const mv = o.order.match(OR.move);
+    if (o.outcomes.includes("BOUNCE") && mv) {
+      const a = unitAnchor(mv[2]);
+      if (a) marks.push(
+        <g key={`b-${i}`} style={{ pointerEvents: "none" }}>
+          <circle cx={a[0]} cy={a[1]} r={17} fill="#fdfaf2" fillOpacity={0.9} />
+          <path d={`M ${a[0] - 11} ${a[1] - 11} L ${a[0] + 11} ${a[1] + 11}
+                    M ${a[0] + 11} ${a[1] - 11} L ${a[0] - 11} ${a[1] + 11}`}
+                stroke="#8f3328" strokeWidth={5} strokeLinecap="round" />
+        </g>
+      );
+    }
+    if (o.outcomes.includes("DISLODGED")) {
+      const loc = o.order.split(" ")[1];
+      const a = unitAnchor(loc);
+      if (a) marks.push(
+        <path key={`d-${i}`} style={{ pointerEvents: "none" }}
+              d={`M ${a[0] - 17} ${a[1] + 16} L ${a[0] + 17} ${a[1] - 16}`}
+              stroke="#8f3328" strokeWidth={5} strokeLinecap="round" />
+      );
+    }
+  });
+  return <>{marks}</>;
+}
+
 /* ------------------------------------------------------------------ board */
 export default function Board({
-  state, me, ix, entry, highlights, orders, onProvince, viewBox = FIT,
+  state, me, ix, entry, highlights, orders, results, onProvince, viewBox = FIT,
 }: {
   state: BoardState;
   me: Power;
@@ -141,6 +171,7 @@ export default function Board({
   entry: Entry;
   highlights: Set<string>;
   orders: string[];
+  results?: { order: string; outcomes: string[] }[] | null;
   onProvince: (p: string, phase: "down" | "up") => void;
   viewBox?: string;
 }) {
@@ -225,6 +256,7 @@ export default function Board({
       )}
 
       {orders.map((o, i) => <DraftedOrder key={`o-${i}`} order={o} colour={TOKEN[me]} />)}
+      {results && results.length > 0 && <FailureMarks result={results} />}
 
       {Object.entries(state.powers).flatMap(([power, p]) =>
         p.units.map((u) => {

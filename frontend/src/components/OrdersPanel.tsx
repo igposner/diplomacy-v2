@@ -17,6 +17,13 @@ export function describe(o: string): string {
     return `${UNIT[m[1] as "A" | "F"]} ${m[2]} supports ${m[3]}`;
   if ((m = o.match(/^F (\S+) C A (\S+) - (\S+)$/)))
     return `Fleet ${m[1]} convoys ${m[2]} to ${m[3]}`;
+  if ((m = o.match(/^([AF]) (\S+) R (\S+)$/)))
+    return `${UNIT[m[1] as "A" | "F"]} ${m[2]} retreats to ${m[3]}`;
+  if ((m = o.match(/^([AF]) (\S+) D$/)))
+    return `Disband the ${UNIT[m[1] as "A" | "F"].toLowerCase()} in ${m[2]}`;
+  if ((m = o.match(/^([AF]) (\S+) B$/)))
+    return `Build ${m[1] === "A" ? "an army" : "a fleet"} in ${m[2]}`;
+  if (o === "WAIVE") return "Waive a build";
   return o;
 }
 

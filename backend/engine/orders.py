@@ -126,6 +126,6 @@ def describe(s: str) -> str:
     if isinstance(o, SupportMove): return f"{unit[o.kind]} {o.loc} supports {o.target} into {o.dest}"
     if isinstance(o, Convoy):      return f"Fleet {o.loc} convoys {o.target} to {o.dest}"
     if isinstance(o, Retreat):     return f"{unit[o.kind]} {o.loc} retreats to {o.dest}"
-    if isinstance(o, Disband):     return f"{unit[o.kind]} {o.loc} disbands"
-    if isinstance(o, Build):       return f"Build {unit[o.kind].lower()} in {o.loc}"
+    if isinstance(o, Disband):     return f"Disband the {unit[o.kind].lower()} in {o.loc}"
+    if isinstance(o, Build):       return f"Build {'an army' if o.kind == 'A' else 'a fleet'} in {o.loc}"
     return "Waive a build"

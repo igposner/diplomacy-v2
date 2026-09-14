@@ -1,8 +1,8 @@
-"""Diplomacy API. Thin: every rules decision belongs to engine.facade."""
+"""Diplomacy API. Thin: every rules decision belongs to engine.facade,
+and nothing lives only in memory -- see storage.py."""
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -11,8 +11,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import storage
 from bots.greedy_bot import GreedyBot
-from engine.facade import POWERS, Facade
+from engine.facade import POWERS, Facade, PhaseResult
 
 app = FastAPI(title="Diplomacy API")
 app.add_middleware(
@@ -22,9 +23,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GAMES: dict[str, Facade] = {}
-# Press, per game. Kept in memory for now; it moves to SQLite with persistence.
-MESSAGES: dict[str, list[dict]] = {}
+# A cache in front of SQLite, not the source of truth.
+LIVE: dict[str, Facade] = {}
+HUMAN: dict[str, str] = {}
 
 
 class NewGame(BaseModel):
@@ -39,20 +40,42 @@ class Orders(BaseModel):
 
 class Message(BaseModel):
     sender: str
-    to: str          # a power name, or GLOBAL
+    to: str
     text: str
 
 
 def get(game_id: str) -> Facade:
-    f = GAMES.get(game_id)
-    if f is None:
+    f = LIVE.get(game_id)
+    if f is not None:
+        return f
+    loaded = storage.load_game(game_id)
+    if loaded is None:
         raise HTTPException(404, f"no game {game_id}")
+    game, human, _ = loaded
+    f = Facade(game)
+    LIVE[game_id] = f
+    HUMAN[game_id] = human
     return f
+
+
+def result_json(r: PhaseResult) -> dict:
+    return {
+        "phase": r.phase,
+        "centerChanges": r.center_changes,
+        "dislodged": r.dislodged,
+        "orders": [{"power": o.power, "order": o.order, "english": o.english,
+                    "outcomes": o.outcomes, "ok": o.ok} for o in r.orders],
+    }
 
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "games": len(GAMES)}
+    return {"status": "ok", "live": len(LIVE), "stored": len(storage.list_games(1000))}
+
+
+@app.get("/api/games")
+async def list_games():
+    return storage.list_games()
 
 
 @app.post("/api/games")
@@ -66,39 +89,54 @@ async def new_game(body: NewGame):
         if f.done:
             break
         for p in POWERS:
-            locs = f.legal_orders(p)
-            if locs:
+            if f.legal_orders(p):
                 f.game.set_orders(p, await bots[p].decide_orders(f.game))
         f.process()
     gid = uuid.uuid4().hex[:8]
-    GAMES[gid] = f
+    LIVE[gid] = f
+    HUMAN[gid] = power
+    storage.create_game(gid, power, f.game)
     return {"game_id": gid, "power": power, "phase": f.phase}
 
 
 @app.get("/api/games/{game_id}/state")
 async def state(game_id: str, power: str | None = None):
-    return get(game_id).state(power.upper() if power else None)
+    f = get(game_id)
+    out = f.state(power.upper() if power else None)
+    loaded = storage.load_game(game_id)
+    out["lastResult"] = loaded[2] if loaded else None
+    return out
 
 
 @app.post("/api/games/{game_id}/orders")
 async def orders(game_id: str, body: Orders):
     f = get(game_id)
-    bad = f.validate(body.power.upper(), body.orders)
+    power = body.power.upper()
+    bad = f.validate(power, body.orders)
     if bad:
         raise HTTPException(400, {"message": "illegal orders", "orders": bad})
-    f.submit(body.power.upper(), body.orders)
+    f.submit(power, body.orders)
+    storage.save_game(game_id, f.game)
     return {"accepted": body.orders}
+
+
+@app.post("/api/games/{game_id}/process")
+async def process(game_id: str):
+    f = get(game_id)
+    bots = {p: GreedyBot(p) for p in POWERS}
+    for p in POWERS:
+        if f.legal_orders(p) and not f.game.powers[p].orders:
+            f.game.set_orders(p, await bots[p].decide_orders(f.game))
+    r = f.process()
+    payload = result_json(r)
+    storage.save_game(game_id, f.game, payload)
+    return {**payload, "next": f.phase}
 
 
 @app.get("/api/games/{game_id}/messages")
 async def read_messages(game_id: str, power: str):
-    """Only what this power can see: its own channels and anything global."""
     get(game_id)
-    me = power.upper()
-    return [
-        m for m in MESSAGES.get(game_id, [])
-        if m["to"] == "GLOBAL" or m["sender"] == me or m["to"] == me
-    ]
+    return storage.messages_for(game_id, power.upper())
 
 
 @app.post("/api/games/{game_id}/messages")
@@ -112,24 +150,4 @@ async def send_message(game_id: str, body: Message):
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "empty message")
-    m = {"sender": sender, "to": to, "text": text[:2000], "phase": f.phase,
-         "at": datetime.now(timezone.utc).isoformat()}
-    MESSAGES.setdefault(game_id, []).append(m)
-    return m
-
-
-@app.post("/api/games/{game_id}/process")
-async def process(game_id: str):
-    f = get(game_id)
-    bots = {p: GreedyBot(p) for p in POWERS}
-    for p in POWERS:
-        if f.legal_orders(p) and not f.game.powers[p].orders:
-            f.game.set_orders(p, await bots[p].decide_orders(f.game))
-    r = f.process()
-    return {
-        "phase": r.phase,
-        "next": f.phase,
-        "centerChanges": r.center_changes,
-        "orders": [{"power": o.power, "order": o.order, "english": o.english,
-                    "outcomes": o.outcomes, "ok": o.ok} for o in r.orders],
-    }
+    return storage.add_message(game_id, sender, to, text[:2000], f.phase)
