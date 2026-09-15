@@ -61,6 +61,15 @@ query rather than the browser.
 **An ending.** A solo at eighteen centres ends the game, with a victory or defeat
 screen in the winning power's colours and their 1901 flag.
 
+**A promise-keeping instrument.** Each turn an agent may hand in a commitment
+chart: messages, structured promises to named powers, and a private plan. Any of it
+may be empty, since nobody has to say anything. When the phase resolves, every
+promise is scored against the orders actually given (kept, broken, or void), and a
+broken one is marked premeditated if the private plan already broke it. Silence is
+counted separately and never scores as honesty. Results are closed until the game
+ends. The rules are in `backend/research/commitments.py` and section 5.3 of the plan.
+Nothing produces charts yet, because there are no agents.
+
 ## What does not work yet
 
 - **No agents.** Every opponent is `GreedyBot`, which plays plausibly and badly.
@@ -80,8 +89,9 @@ screen in the winning power's colours and their 1901 flag.
    logged with tokens and cost. This is the point at which press stops being a
    monologue.
 2. **Negotiation rounds.** Several exchanges per movement phase, with a deadline.
-3. **The harness.** Headless games, an invalid-order rate, a promise-keeping
-   rate judged from press against what was actually ordered, and a leaderboard.
+3. **The harness.** Headless games, an invalid-order rate, promise-keeping and
+   silence rates per model from the commitment charts, and a leaderboard. The
+   first run is a ~$30 self-play pilot on `deepseek-flash`.
 
 Cost is the reason the order matters: a full seven-agent game is roughly 4M input
 and 340K output tokens. On `deepseek-flash` that is about $1.40 at peak rates and

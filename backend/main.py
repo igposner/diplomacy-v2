@@ -14,6 +14,7 @@ from pydantic import BaseModel
 import storage
 from bots.greedy_bot import GreedyBot
 from engine.facade import POWERS, Facade, PhaseResult
+from research.record import game_summary, record_phase
 
 app = FastAPI(title="Diplomacy API")
 app.add_middleware(
@@ -141,6 +142,7 @@ async def _resolve(game_id: str, f: Facade, human: str | None) -> dict:
     for p, bot in bots.items():
         if f.legal_orders(p) and not f.game.powers[p].orders:
             f.game.set_orders(p, await bot.decide_orders(f.game))
+    record_phase(game_id, f)   # every order is in; score promises before the position is gone
     r = f.process()
     payload = result_json(r)
     storage.save_game(game_id, f.game, payload)
@@ -170,6 +172,19 @@ async def process(game_id: str):
     f = get(game_id)
     loaded = storage.load_game(game_id)
     return await _resolve(game_id, f, loaded[1] if loaded else HUMAN.get(game_id))
+
+
+@app.get("/api/games/{game_id}/research")
+async def research(game_id: str):
+    """Promise-keeping per power. Closed until the game ends: mid-game it would
+    tell a player who has been lying to them, which changes the game being measured."""
+    f = get(game_id)
+    if not f.done:
+        raise HTTPException(403, "research data is available once the game is over")
+    loaded = storage.load_game(game_id)
+    humans = {loaded[1]} if loaded else set()
+    return {"summary": {p: s.to_dict() for p, s in game_summary(game_id, humans).items()},
+            "verdicts": storage.verdicts_for(game_id)}
 
 
 @app.get("/api/games/{game_id}/messages")

@@ -36,6 +36,34 @@ CREATE TABLE IF NOT EXISTS messages (
     at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_by_game ON messages(game_id, id);
+
+-- Research. None of this is ever served to a player during a game.
+CREATE TABLE IF NOT EXISTS charts (          -- what an agent handed in beside its orders
+    game_id     TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    power       TEXT NOT NULL,
+    phase       TEXT NOT NULL,
+    commitments TEXT NOT NULL,               -- JSON list, may be empty
+    plan        TEXT NOT NULL,               -- JSON list: the private plan
+    rejected    TEXT NOT NULL,               -- JSON list: what could not be scored, and why
+    at          TEXT NOT NULL,
+    PRIMARY KEY (game_id, power, phase)
+);
+CREATE TABLE IF NOT EXISTS turns (           -- one row per power with units to order, per phase
+    game_id  TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    phase    TEXT NOT NULL,
+    power    TEXT NOT NULL,
+    spoke    INTEGER NOT NULL,               -- 0 = said nothing to anyone: silence
+    PRIMARY KEY (game_id, phase, power)
+);
+CREATE TABLE IF NOT EXISTS verdicts (        -- every promise, scored against the orders given
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id    TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    phase      TEXT NOT NULL,
+    commitment TEXT NOT NULL,                -- JSON
+    verdict    TEXT NOT NULL,                -- KEPT | BROKEN | VOID
+    intent     TEXT NOT NULL,                -- PREMEDITATED | LATER | UNKNOWN
+    reason     TEXT NOT NULL
+);
 """
 
 _local = threading.local()
@@ -121,3 +149,52 @@ def messages_for(game_id: str, power: str) -> list[dict]:
         " ORDER BY id", (game_id, power, power)).fetchall()
     return [{"sender": r["sender"], "to": r["recipient"], "text": r["text"],
              "phase": r["phase"], "at": r["at"]} for r in rows]
+
+
+# ---------------------------------------------------------------- research
+def save_chart(game_id: str, chart) -> None:
+    """Replaces any earlier chart from the same power in the same phase."""
+    from dataclasses import asdict
+    c = _conn()
+    c.execute("INSERT OR REPLACE INTO charts (game_id, power, phase, commitments, plan, rejected, at)"
+              " VALUES (?,?,?,?,?,?,?)",
+              (game_id, chart.power, chart.phase, json.dumps([asdict(x) for x in chart.commitments]),
+               json.dumps(chart.plan), json.dumps(chart.rejected), _now()))
+    c.commit()
+
+
+def charts_in_phase(game_id: str, phase: str) -> list[dict]:
+    rows = _conn().execute("SELECT * FROM charts WHERE game_id=? AND phase=?", (game_id, phase)).fetchall()
+    return [{"power": r["power"], "commitments": json.loads(r["commitments"]),
+             "plan": json.loads(r["plan"]), "rejected": json.loads(r["rejected"])} for r in rows]
+
+
+def senders_in_phase(game_id: str, phase: str) -> set[str]:
+    rows = _conn().execute("SELECT DISTINCT sender FROM messages WHERE game_id=? AND phase=?",
+                           (game_id, phase)).fetchall()
+    return {r["sender"] for r in rows}
+
+
+def record_turn(game_id: str, phase: str, spoke: dict[str, bool], verdicts: list[dict]) -> None:
+    """Written once, as the phase resolves. Idempotent for the same phase."""
+    c = _conn()
+    c.execute("DELETE FROM turns WHERE game_id=? AND phase=?", (game_id, phase))
+    c.execute("DELETE FROM verdicts WHERE game_id=? AND phase=?", (game_id, phase))
+    c.executemany("INSERT INTO turns (game_id, phase, power, spoke) VALUES (?,?,?,?)",
+                  [(game_id, phase, p, int(v)) for p, v in spoke.items()])
+    c.executemany("INSERT INTO verdicts (game_id, phase, commitment, verdict, intent, reason)"
+                  " VALUES (?,?,?,?,?,?)",
+                  [(game_id, phase, json.dumps(v["commitment"]), v["verdict"], v["intent"], v["reason"])
+                   for v in verdicts])
+    c.commit()
+
+
+def turns_for(game_id: str) -> list[dict]:
+    return [dict(r) for r in _conn().execute(
+        "SELECT phase, power, spoke FROM turns WHERE game_id=? ORDER BY rowid", (game_id,)).fetchall()]
+
+
+def verdicts_for(game_id: str) -> list[dict]:
+    return [{"phase": r["phase"], "commitment": json.loads(r["commitment"]), "verdict": r["verdict"],
+             "intent": r["intent"], "reason": r["reason"]}
+            for r in _conn().execute("SELECT * FROM verdicts WHERE game_id=? ORDER BY id", (game_id,))]

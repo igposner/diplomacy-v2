@@ -11,3 +11,7 @@ echo "--- persistence across restarts ---"
 ./venv/bin/python tests/test_persistence.py
 echo "--- solo victory ends the game ---"
 ./venv/bin/python tests/test_victory.py
+echo "--- promise-keeping: the six scoring rules and the chart ---"
+./venv/bin/python tests/test_commitments.py | grep passed
+echo "--- promise-keeping: recorded through the real resolve path ---"
+./venv/bin/python tests/test_research_record.py | tail -1
