@@ -62,6 +62,8 @@ const OR = {
   supHold: /^[AF] ([A-Z]{3}(?:\/[A-Z]{2})?) S [AF] ([A-Z]{3}(?:\/[A-Z]{2})?)$/,
   convoy: /^F ([A-Z]{3}(?:\/[A-Z]{2})?) C A ([A-Z]{3}(?:\/[A-Z]{2})?) - ([A-Z]{3}(?:\/[A-Z]{2})?)$/,
   hold: /^[AF] ([A-Z]{3}(?:\/[A-Z]{2})?) H$/,
+  build: /^([AF]) ([A-Z]{3}(?:\/[A-Z]{2})?) B$/,
+  disband: /^([AF]) ([A-Z]{3}(?:\/[A-Z]{2})?) D$/,
 };
 
 function Arrow({ from, to, colour, dashed, hollow }:
@@ -131,6 +133,55 @@ function DraftedOrder({ order, colour }: { order: string; colour: string }) {
   return null;
 }
 
+/* Builds and removals. A unit being added is circled boldly; a unit being
+   removed is crossed out. Where the piece is not on the board being shown (a
+   build not yet placed, or a removal already carried out) a token stands in for
+   it, slightly faded when it is the one going away. The cross does the telling,
+   so the piece must stay recognisable under it. Drawn above the tokens. */
+type AdjustMark = { kind: "A" | "F"; loc: string; power: Power; add: boolean };
+
+function adjustMarks(orders: { order: string; power: Power; ok?: boolean }[]): AdjustMark[] {
+  const seen = new Set<string>();
+  const out: AdjustMark[] = [];
+  for (const o of orders) {
+    if (o.ok === false) continue;           // a void build or removal never happened
+    const b = o.order.match(OR.build), d = o.order.match(OR.disband);
+    const m = b ?? d;
+    if (!m || seen.has(o.order)) continue;
+    seen.add(o.order);
+    out.push({ kind: m[1] as "A" | "F", loc: m[2], power: o.power, add: !!b });
+  }
+  return out;
+}
+
+function AdjustSign({ mark, onBoard }: { mark: AdjustMark; onBoard: boolean }) {
+  const a = unitAnchor(mark.loc);
+  if (!a) return null;
+  const [x, y] = a;
+  const name = `${mark.kind === "A" ? "Army" : "Fleet"} ${mark.add ? "built in" : "removed from"} ${base(mark.loc)}`;
+  const piece = <Token power={mark.power} kind={mark.kind} x={x} y={y} />;
+  if (mark.add) {
+    return (
+      <g style={{ pointerEvents: "none" }}>
+        <title>{name}</title>
+        {!onBoard && piece}
+        <circle cx={x} cy={y} r={31} fill="none" stroke="#fdfaf2" strokeWidth={12} strokeOpacity={0.9} />
+        <circle cx={x} cy={y} r={31} fill="none" stroke={BORDER_INK} strokeWidth={6.5} />
+      </g>
+    );
+  }
+  // Outline, then the piece, then the cross: the piece stays legible between the arms.
+  const X = `M ${x - 30} ${y - 27} L ${x + 30} ${y + 27} M ${x + 30} ${y - 27} L ${x - 30} ${y + 27}`;
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      <title>{name}</title>
+      <path d={X} stroke="#fdfaf2" strokeWidth={10} strokeLinecap="round" strokeOpacity={0.85} />
+      <g opacity={onBoard ? 1 : 0.8}>{piece}</g>
+      <path d={X} stroke="#8f3328" strokeWidth={4.6} strokeLinecap="round" />
+    </g>
+  );
+}
+
 /* Marks for the phase that just resolved. Shown for review straight after a
    resolve, then cleared the moment you start ordering -- they are a report on
    the last turn, not part of the board you are playing on.
@@ -152,6 +203,7 @@ function FailureMarks({ result }: { result: { order: string; outcomes: string[];
   );
 
   result.forEach((o, i) => {
+    if (OR.build.test(o.order) || OR.disband.test(o.order) || o.order === "WAIVE") return;  // see AdjustSign
     const why = o.outcomes.join(", ").toLowerCase().replace(/_/g, " ");
     const mv = o.order.match(OR.move);
     if (mv && o.outcomes.some((c) => FAILED_MOVE.includes(c))) {
@@ -192,9 +244,9 @@ export default function Board({
   entry: Entry;
   highlights: Set<string>;
   /** Plain strings are yours; tagged ones (history) are drawn in their power's colour. */
-  orders: (string | { order: string; power: string })[];
+  orders: (string | { order: string; power: string; ok?: boolean })[];
   /** Only passed while reviewing the phase that just resolved. */
-  results?: { order: string; outcomes: string[]; ok?: boolean }[] | null;
+  results?: { order: string; outcomes: string[]; ok?: boolean; power?: string }[] | null;
   onProvince: (p: string, phase: "down" | "up") => void;
   viewBox?: string;
 }) {
@@ -294,6 +346,15 @@ export default function Board({
       )}
 
       {results && results.length > 0 && <FailureMarks result={results} />}
+
+      {adjustMarks([
+        ...orders.map((o) => (typeof o === "string" ? { order: o, power: me } : { ...o, power: o.power as Power })),
+        ...(results ?? []).filter((o) => o.power).map((o) => ({ ...o, power: o.power as Power })),
+      ]).map((mk) => {
+        const here = Object.values(state.powers).some((p) =>
+          p.units.some((u) => base(splitUnit(u).loc) === base(mk.loc)));
+        return <AdjustSign key={`adj-${mk.power}-${mk.loc}`} mark={mk} onBoard={here} />;
+      })}
 
       <rect x={0} y={0} width={MAP.viewBox[2]} height={MAP.viewBox[3]} fill="url(#vignette)"
             pointerEvents="none" />

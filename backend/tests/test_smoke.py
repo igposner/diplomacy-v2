@@ -19,6 +19,7 @@ async def main() -> int:
     bots = {p: GreedyBot(p) for p in POWERS}
     phases = 0
     results_seen = 0
+    kinds_reported: set[str] = set()
 
     while not f.done and phases < 60:
         for p in POWERS:
@@ -27,8 +28,18 @@ async def main() -> int:
                 bad = f.validate(p, orders)
                 assert not bad, f"bot produced orders the facade rejects: {bad}"
                 f.submit(p, orders)
+        kind = f.phase_type
+        # What the engine accepted: it drops builds beyond a power's allowance, and
+        # keeps winter orders (WAIVE included) in power.adjust, apart from the rest.
+        given = sum(len(f.game.powers[p].adjust) if kind == "ADJUSTMENT" else len(f.game.get_orders(p))
+                    for p in POWERS)
         r = f.process()
         results_seen += len(r.orders)
+        # Every accepted order is reported back, whatever the phase. Winter builds
+        # were once lost from the report entirely.
+        assert len(r.orders) == given, f"{r.phase}: {given} orders given, {len(r.orders)} reported"
+        if given:
+            kinds_reported.add(kind)
         for o in r.orders:
             assert o.outcomes, f"no outcome recorded for {o.order}"
             assert o.english and o.english != o.order or " " in o.english
@@ -36,6 +47,7 @@ async def main() -> int:
         if int(f.phase.split()[1]) >= 1912:
             break
 
+    assert {"MOVEMENT", "ADJUSTMENT"} <= kinds_reported, kinds_reported
     counts = {p: len(f.game.powers[p].centers) for p in POWERS}
     owned = [c for p in POWERS for c in f.game.powers[p].centers]
     # Centres left neutral are normal, so owned <= 34; what must never happen is

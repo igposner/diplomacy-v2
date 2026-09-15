@@ -34,10 +34,11 @@ interface Past extends BoardState {
   orders: { power: string; order: string; outcomes: string[]; ok: boolean }[];
 }
 
-/* "FALL 1903 RETREATS" -> ["Fall 1903", "retreats"] */
+/* "FALL 1903 RETREATS" -> ["Fall 1903", "retreats"]; the winter phase is called the build. */
+const KIND: Record<string, string> = { MOVEMENT: "movement", RETREATS: "retreats", ADJUSTMENTS: "build" };
 const phaseName = (long: string): [string, string] => {
   const [season, year, kind] = long.split(" ");
-  return [`${season[0]}${season.slice(1).toLowerCase()} ${year}`, (kind ?? "").toLowerCase()];
+  return [`${season[0]}${season.slice(1).toLowerCase()} ${year}`, KIND[kind] ?? (kind ?? "").toLowerCase()];
 };
 const clockText = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const draftOf = (orders: string[]) =>

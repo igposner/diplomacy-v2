@@ -61,7 +61,7 @@ export default function OrdersPanel({
         </h2>
         <span style={{ font: "500 9px 'IBM Plex Mono', monospace", letterSpacing: 1.2,
                        textTransform: "uppercase", color: "#7a6c50" }}>
-          {total === 0 ? "nothing to adjust"
+          {total === 0 ? "nothing to build or remove"
                        : `${orders.length} of ${total} ${noun} ${verb}`}
         </span>
         <span style={{ flex: 1 }} />

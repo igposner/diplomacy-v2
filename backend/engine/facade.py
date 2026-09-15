@@ -172,10 +172,13 @@ class Facade:
             raise ValueError("the game is over")
         phase = self.phase
         before = {c: n for n, p in self.game.powers.items() for c in p.centers}
-        # power.orders is {unit: rest-of-order}, e.g. {"A PAR": "- BUR"}.
-        # result_history is keyed by that same unit string; an empty list means success.
+        # power.orders is {unit: rest-of-order}, e.g. {"A PAR": "- BUR"}. Winter
+        # builds and removals are not there at all: the engine keeps them as whole
+        # strings in power.adjust. result_history is keyed by the unit either way;
+        # an empty list means success.
         submitted = {
             n: [(unit, f"{unit} {rest}".strip()) for unit, rest in p.orders.items() if rest]
+               + [(" ".join(o.split()[:2]) if o != "WAIVE" else "WAIVE", o) for o in p.adjust]
             for n, p in self.game.powers.items()
         }
         self.game.process()
