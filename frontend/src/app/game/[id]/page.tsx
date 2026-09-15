@@ -21,6 +21,8 @@ interface State extends BoardState {
   orderable?: string[]; legalOrders?: Record<string, string[]>;
   lastResult?: PhaseResult | null;
   outcome?: Outcome | null;
+  opponents?: "bots" | "agents";
+  agents?: { model: string; negotiating: boolean; cost: number };
 }
 
 export default function GamePage() {
@@ -52,14 +54,32 @@ export default function GamePage() {
   const highlights = useMemo(() => (ix ? targets(ix, entry) : new Set<string>()), [ix, entry]);
 
   const load = useCallback(async (id: string) => {
-    const [s, m] = await Promise.all([
-      fetch(`${API}/api/games/${id}/state`).then((r) => r.json()),
-      fetch(`${API}/api/games/${id}/state`).then((r) => r.json())
-        .then((s: State) => fetch(`${API}/api/games/${id}/messages?power=${s.humanPower}`)
-          .then((r) => r.json())),
-    ]);
+    const s: State = await fetch(`${API}/api/games/${id}/state`).then((r) => r.json());
+    const m = await fetch(`${API}/api/games/${id}/messages?power=${s.humanPower}`).then((r) => r.json());
     setState(s); setPress(m); setEntry({ kind: "idle" });
+    setTalking(s.agents?.negotiating ?? false);
   }, []);
+
+  /* Agents write while you think. Poll press and whether they are still at it,
+     without touching the board: a refresh must never drop a half-entered order. */
+  const [talking, setTalking] = useState(false);
+  const agentGame = state?.opponents === "agents";
+  const humanPower = state?.humanPower;
+  useEffect(() => {
+    if (!gameId || !agentGame || !humanPower) return;
+    const tick = async () => {
+      try {
+        const [m, s] = await Promise.all([
+          fetch(`${API}/api/games/${gameId}/messages?power=${humanPower}`).then((r) => r.json()),
+          fetch(`${API}/api/games/${gameId}/state`).then((r) => r.json()),
+        ]);
+        setPress((old) => (old.length === m.length ? old : m));
+        setTalking(s.agents?.negotiating ?? false);
+      } catch { /* the next tick will try again */ }
+    };
+    const t = setInterval(tick, 2500);
+    return () => clearInterval(t);
+  }, [gameId, agentGame, humanPower]);
 
   useEffect(() => {
     if (!id) return;
@@ -286,7 +306,8 @@ export default function GamePage() {
 
         <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />
 
-        <PressPanel me={seat} messages={press} onSend={sendPress} />
+        <PressPanel me={seat} messages={press} onSend={sendPress}
+                    agents={agentGame} talking={talking} />
       </aside>
     </main>
   );

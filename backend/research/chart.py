@@ -69,6 +69,7 @@ class Chart:
     messages: list[dict] = field(default_factory=list)
     commitments: list[Commitment] = field(default_factory=list)
     plan: list[str] = field(default_factory=list)
+    round: int = 0
     rejected: list[str] = field(default_factory=list)   # what was dropped, and why
 
     @property
@@ -76,14 +77,14 @@ class Chart:
         return not self.messages and not self.commitments
 
 
-def parse_chart(power: str, phase: str, data: dict, legal: dict[str, list[str]]) -> Chart:
+def parse_chart(power: str, phase: str, data: dict, legal: dict[str, list[str]], round: int = 0) -> Chart:
     """Turn an agent's chart into scoreable records, dropping what cannot be scored.
 
     Nothing is silently discarded: everything refused is listed in `rejected`,
     so a model that keeps writing malformed promises shows up as exactly that.
     """
     power = power.upper()
-    chart = Chart(power, phase)
+    chart = Chart(power, phase, round=round)
     others = set(POWERS) - {power}
     valid_orders = {o for opts in legal.values() for o in opts}
 
@@ -119,3 +120,19 @@ def parse_chart(power: str, phase: str, data: dict, legal: dict[str, list[str]])
             chart.rejected.append(f"private plan order {o!r} is not legal this phase")
 
     return chart
+
+
+def describe_commitment(c: Commitment) -> str:
+    """How a commitment reads to the power it is made to."""
+    who = c.speaker.title()
+    text = {
+        "move": f"{c.unit} will move to {c.dest}",
+        "hold": f"{c.unit} will hold",
+        "support_hold": f"{c.unit} will support {c.target} holding",
+        "support_move": f"{c.unit} will support {c.target} into {c.dest}",
+        "convoy": f"{c.unit} will convoy {c.target} to {c.dest}",
+        "no_enter": f"no {who} unit will move into {c.province}",
+    }[c.kind]
+    if c.condition:
+        text += f", if {c.condition.power.title()} orders {c.condition.order}"
+    return f"{who} commits: {text} this turn."

@@ -25,14 +25,23 @@ def record_phase(game_id: str, f: Facade) -> list[Scored]:
     orders = {p: f.game.get_orders(p) for p in POWERS}
     orderable = {p: set(legal[p]) for p in POWERS}
 
-    charts = storage.charts_in_phase(game_id, phase)
-    promises = [_commitment(c) for ch in charts for c in ch["commitments"]]
-    plans = {ch["power"]: ch["plan"] for ch in charts}
-    scored = score_phase(promises, orders, orderable, plans, legal)
+    # Each promise is judged for intent against the plan written in the same
+    # sheet, not a later one. A promise repeated in a later round is one promise.
+    scored: list[Scored] = []
+    promises: list[Commitment] = []
+    seen: set[Commitment] = set()
+    for ch in storage.charts_in_phase(game_id, phase):
+        fresh = [c for c in map(_commitment, ch["commitments"]) if c not in seen]
+        seen.update(fresh)
+        promises += fresh
+        plans = {ch["power"]: ch["plan"]} if ch["plan"] else None
+        scored += score_phase(fresh, orders, orderable, plans, legal)
 
     # Silence means no word to anyone: no message and no promise.
     talked = storage.senders_in_phase(game_id, phase) | {c.speaker for c in promises}
-    storage.record_turn(game_id, phase, {p: p in talked for p in active},
+    # Silence is only possible where talking was: retreats and builds have no press.
+    turns = {p: p in talked for p in active} if f.phase_type == "MOVEMENT" else {}
+    storage.record_turn(game_id, phase, turns,
                         [{"commitment": asdict(s.commitment), "verdict": s.verdict,
                           "intent": s.intent, "reason": s.reason} for s in scored])
     return scored

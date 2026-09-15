@@ -2,7 +2,9 @@
 and nothing lives only in memory -- see storage.py."""
 from __future__ import annotations
 
+import asyncio
 import uuid
+from typing import Literal
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -13,6 +15,8 @@ from pydantic import BaseModel
 
 import storage
 from bots.greedy_bot import GreedyBot
+from agents.models import MissingKey, make_model
+from agents.table import Table
 from engine.facade import POWERS, Facade, PhaseResult
 from research.record import game_summary, record_phase
 
@@ -27,11 +31,16 @@ app.add_middleware(
 # A cache in front of SQLite, not the source of truth.
 LIVE: dict[str, Facade] = {}
 HUMAN: dict[str, str] = {}
+TABLES: dict[str, Table] = {}   # agent games only; rebuilt from storage after a restart
+MODELS = make_model             # tests swap this for an offline model
 
 
 class NewGame(BaseModel):
     power: str = "FRANCE"
     advance: int = 0          # play this many phases with scripted bots first
+    opponents: Literal["bots", "agents"] = "bots"
+    model: str = "deepseek-flash"
+    rounds: int = 2           # press rounds per movement phase
 
 
 class Orders(BaseModel):
@@ -59,6 +68,22 @@ def get(game_id: str) -> Facade:
     return f
 
 
+def table(game_id: str) -> Table | None:
+    """The agents at this game, or None if the other seats are scripted bots."""
+    if game_id in TABLES:
+        return TABLES[game_id]
+    seat = storage.seating(game_id)
+    if not seat or seat["opponents"] != "agents":
+        return None
+    f = get(game_id)
+    model = MODELS(seat["model"])
+    t = Table(game_id, f, {p: model for p in POWERS if p != seat["human"]}, human=seat["human"])
+    TABLES[game_id] = t
+    if not storage.charts_in_phase(game_id, f.phase):
+        t.open_phase()      # the server went down before this phase's press began
+    return t
+
+
 def result_json(r: PhaseResult) -> dict:
     return {
         "phase": r.phase,
@@ -84,6 +109,12 @@ async def new_game(body: NewGame):
     power = body.power.upper()
     if power not in POWERS:
         raise HTTPException(400, f"invalid power {body.power!r}")
+    model = None
+    if body.opponents == "agents":
+        try:
+            model = MODELS(body.model)
+        except (MissingKey, ValueError) as e:
+            raise HTTPException(400, str(e))
     f = Facade()
     bots = {p: GreedyBot(p) for p in POWERS}
     for _ in range(max(0, body.advance)):
@@ -96,8 +127,12 @@ async def new_game(body: NewGame):
     gid = uuid.uuid4().hex[:8]
     LIVE[gid] = f
     HUMAN[gid] = power
-    storage.create_game(gid, power, f.game)
-    return {"game_id": gid, "power": power, "phase": f.phase}
+    storage.create_game(gid, power, f.game, body.opponents, body.model if model else None)
+    if model is not None:
+        t = Table(gid, f, {p: model for p in POWERS if p != power}, rounds=body.rounds, human=power)
+        TABLES[gid] = t
+        t.open_phase()
+    return {"game_id": gid, "power": power, "phase": f.phase, "opponents": body.opponents}
 
 
 @app.get("/api/games/{game_id}/state")
@@ -110,6 +145,11 @@ async def state(game_id: str, power: str | None = None):
     out = f.state((power or human or "").upper() or None)
     out["humanPower"] = human
     out["lastResult"] = loaded[2] if loaded else None
+    t = table(game_id)
+    out["opponents"] = "agents" if t else "bots"
+    if t:
+        out["agents"] = {"model": next(iter(t.seats.values())).name,
+                         "negotiating": t.negotiating, "cost": round(storage.game_cost(game_id), 4)}
     return out
 
 
@@ -138,14 +178,21 @@ async def _resolve(game_id: str, f: Facade, human: str | None) -> dict:
     pressing resolve used to have a bot play your pieces."""
     if f.done:
         return _finished(f)
-    bots = {p: GreedyBot(p) for p in POWERS if p != human}
-    for p, bot in bots.items():
-        if f.legal_orders(p) and not f.game.powers[p].orders:
-            f.game.set_orders(p, await bot.decide_orders(f.game))
+    t = table(game_id)
+    if t:
+        await t.close_press()
+        await t.orders()
+    else:
+        bots = {p: GreedyBot(p) for p in POWERS if p != human}
+        for p, bot in bots.items():
+            if f.legal_orders(p) and not f.game.powers[p].orders:
+                f.game.set_orders(p, await bot.decide_orders(f.game))
     record_phase(game_id, f)   # every order is in; score promises before the position is gone
     r = f.process()
     payload = result_json(r)
     storage.save_game(game_id, f.game, payload)
+    if t:
+        t.open_phase()
     return {**payload, "next": f.phase, "outcome": f.outcome}
 
 
@@ -182,7 +229,7 @@ async def research(game_id: str):
     if not f.done:
         raise HTTPException(403, "research data is available once the game is over")
     loaded = storage.load_game(game_id)
-    humans = {loaded[1]} if loaded else set()
+    humans = {loaded[1]} if loaded and loaded[1] else set()
     return {"summary": {p: s.to_dict() for p, s in game_summary(game_id, humans).items()},
             "verdicts": storage.verdicts_for(game_id)}
 
@@ -204,4 +251,8 @@ async def send_message(game_id: str, body: Message):
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "empty message")
-    return storage.add_message(game_id, sender, to, text[:2000], f.phase)
+    m = storage.add_message(game_id, sender, to, text[:2000], f.phase)
+    t = table(game_id)
+    if t and sender == t.human:
+        t.message_from_human(to)
+    return m

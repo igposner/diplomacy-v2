@@ -68,27 +68,50 @@ promise is scored against the orders actually given (kept, broken, or void), and
 broken one is marked premeditated if the private plan already broke it. Silence is
 counted separately and never scores as honesty. Results are closed until the game
 ends. The rules are in `backend/research/commitments.py` and section 5.3 of the plan.
-Nothing produces charts yet, because there are no agents.
+Agents now hand these in; no real model has played yet.
+
+**An environment for agents** (`backend/agents/`). Each agent gets a briefing when
+the game starts: the rules, order syntax, how a turn works, and its turn sheet. It
+is told plainly that it never has to say anything. Each movement phase runs two
+press rounds. Every agent answers from the same snapshot, so nobody reads what
+someone else wrote in the same round. A message arriving after the last round earns
+its recipient a reply turn, capped per phase. Then every agent gives orders and
+writes notes for its next turn. Agents see only their own press and the board;
+private plans reach nobody. An illegal order or unparseable reply gets one repair
+call; after that the unit holds. A provider failure is logged, and there is no bot
+fallback. Every call is stored with its prompt, response, tokens and cost, and
+each game has a cost cap. In the browser, agent messages appear as they arrive,
+and commitments are set apart from ordinary chat.
+
+By default agents are not told their promises are scored, not told which seat is
+human, and not given a character. Some of the old character sketches carry
+attitudes to betrayal, which would make honesty a property of the seat.
 
 ## What does not work yet
 
-- **No agents.** Every opponent is `GreedyBot`, which plays plausibly and badly.
-  Nobody answers your press.
-- **No negotiation rounds or deadlines.** Press is free-form with no timer.
+- **No real model has played.** The DeepSeek adapter is written but untested
+  until a key goes in `backend/.env` as `DEEPSEEK_API_KEY=...`. Everything else
+  runs against `dummy`, an offline stand-in that gives random legal orders and
+  canned lines. It is not an agent.
+- **The lobby cannot start an agent game.** Until it can:
+  `curl -XPOST localhost:8000/api/games -H 'content-type: application/json' -d '{"power":"FRANCE","opponents":"agents","model":"deepseek-flash"}'`
+  then open `/game/<id>`.
+- **No deadlines.** If you submit before the agents' press rounds finish, the round
+  in flight completes and the rest are skipped.
 - **No history.** You can see the phase that just resolved, not earlier ones.
-- **No benchmark harness.** No headless runner, no metrics, no leaderboard.
+- **No benchmark harness yet.** `scripts/play_agents.py` plays a headless game and
+  prints cost, failures and promise-keeping; there is no multi-game runner or
+  leaderboard.
 - **One human seat.** The other six are always scripted.
 
 ---
 
 ## What comes next
 
-1. **Agents.** A DeepSeek adapter first, then others through an OpenAI-compatible
-   layer. Structured orders validated against the legal set with one repair
-   attempt, per-power personas, a per-phase diary for memory, and every call
-   logged with tokens and cost. This is the point at which press stops being a
-   monologue.
-2. **Negotiation rounds.** Several exchanges per movement phase, with a deadline.
+1. **A first real game.** One headless phase on `deepseek-flash`, with every prompt
+   and response read by hand, then a full game. Checks: do agents use the turn
+   sheet, how often do they promise only in prose, how many illegal orders.
+2. **Lobby choice of opponents,** and a second cheap model for the pilot.
 3. **The harness.** Headless games, an invalid-order rate, promise-keeping and
    silence rates per model from the commitment charts, and a leaderboard. The
    first run is a ~$30 self-play pilot on `deepseek-flash`.
@@ -107,7 +130,10 @@ backend/
   engine/facade.py     the only module that touches diplomacy.Game
   engine/orders.py     the only module that knows order syntax
   scripts/build_map.py standard.svg -> map data, with seven traps asserted
-  storage.py           SQLite: saved games and press
+  storage.py           SQLite: saved games, press, charts, agent calls, notes
+  agents/              briefing, turn prompt, the table, model adapters
+  research/            commitment charts and the promise-keeping rules
+  scripts/play_agents.py  a headless game of seven agents
   main.py              FastAPI
   bots/                scripted opponents
 frontend/src/

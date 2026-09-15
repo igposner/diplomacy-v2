@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS games (
     human_power  TEXT NOT NULL,
     saved        TEXT NOT NULL,          -- to_saved_game_format(game)
     last_result  TEXT,                   -- the phase that just resolved, or NULL
+    opponents    TEXT NOT NULL DEFAULT 'bots',   -- bots | agents
+    model        TEXT,                           -- the agents' model, when agents
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
@@ -33,7 +35,8 @@ CREATE TABLE IF NOT EXISTS messages (
     recipient TEXT NOT NULL,             -- a power, or GLOBAL
     text      TEXT NOT NULL,
     phase     TEXT NOT NULL,
-    at        TEXT NOT NULL
+    at        TEXT NOT NULL,
+    kind      TEXT NOT NULL DEFAULT 'text'   -- text | commitment
 );
 CREATE INDEX IF NOT EXISTS messages_by_game ON messages(game_id, id);
 
@@ -42,11 +45,12 @@ CREATE TABLE IF NOT EXISTS charts (          -- what an agent handed in beside i
     game_id     TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
     power       TEXT NOT NULL,
     phase       TEXT NOT NULL,
+    round       INTEGER NOT NULL DEFAULT 0,  -- press round the chart was written in
     commitments TEXT NOT NULL,               -- JSON list, may be empty
     plan        TEXT NOT NULL,               -- JSON list: the private plan
     rejected    TEXT NOT NULL,               -- JSON list: what could not be scored, and why
     at          TEXT NOT NULL,
-    PRIMARY KEY (game_id, power, phase)
+    PRIMARY KEY (game_id, power, phase, round)
 );
 CREATE TABLE IF NOT EXISTS turns (           -- one row per power with units to order, per phase
     game_id  TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
@@ -64,9 +68,47 @@ CREATE TABLE IF NOT EXISTS verdicts (        -- every promise, scored against th
     intent     TEXT NOT NULL,                -- PREMEDITATED | LATER | UNKNOWN
     reason     TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS agent_calls (     -- every model call, in full, with its cost
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id     TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    power       TEXT NOT NULL,
+    phase       TEXT NOT NULL,
+    step        TEXT NOT NULL,               -- press:N | reply | orders | repair
+    model       TEXT NOT NULL,
+    prompt      TEXT NOT NULL,
+    response    TEXT,
+    error       TEXT,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    cached_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd    REAL NOT NULL DEFAULT 0,
+    latency_ms  INTEGER NOT NULL DEFAULT 0,
+    at          TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS notes (           -- an agent's private notebook, carried turn to turn
+    game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    power   TEXT NOT NULL,
+    phase   TEXT NOT NULL,
+    text    TEXT NOT NULL,
+    at      TEXT NOT NULL
+);
 """
 
+# Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS never
+# alters an existing table, so an old database would silently lack them.
+_ADDED = [("messages", "kind", "TEXT NOT NULL DEFAULT 'text'"),
+          ("games", "opponents", "TEXT NOT NULL DEFAULT 'bots'"),
+          ("games", "model", "TEXT")]
+
 _local = threading.local()
+
+
+def _migrate(c: sqlite3.Connection) -> None:
+    # charts gained a round in its primary key; it only ever held test data
+    if "round" not in {r[1] for r in c.execute("PRAGMA table_info(charts)")}:
+        c.execute("DROP TABLE charts")
+        c.executescript(_SCHEMA)
+    c.commit()
 
 
 def _conn() -> sqlite3.Connection:
@@ -76,9 +118,20 @@ def _conn() -> sqlite3.Connection:
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA foreign_keys=ON")
-        c.executescript(_SCHEMA)
+        _migrate_first(c)
         _local.conn = c
     return c
+
+
+def _migrate_first(c: sqlite3.Connection) -> None:
+    # Old tables must gain their columns before the schema's indexes refer to them.
+    exists = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if exists:
+        for table, col, decl in _ADDED:
+            if table in exists and col not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    c.executescript(_SCHEMA)
+    _migrate(c)
 
 
 def _now() -> str:
@@ -86,15 +139,22 @@ def _now() -> str:
 
 
 # ---------------------------------------------------------------- games
-def create_game(game_id: str, human_power: str, game: diplomacy.Game) -> None:
+def create_game(game_id: str, human_power: str, game: diplomacy.Game,
+                opponents: str = "bots", model: str | None = None) -> None:
     c = _conn()
     now = _now()
     c.execute(
-        "INSERT OR REPLACE INTO games (id, human_power, saved, last_result, created_at, updated_at)"
-        " VALUES (?,?,?,NULL,?,?)",
-        (game_id, human_power, json.dumps(to_saved_game_format(game)), now, now),
+        "INSERT OR REPLACE INTO games (id, human_power, saved, last_result, opponents, model,"
+        " created_at, updated_at) VALUES (?,?,?,NULL,?,?,?,?)",
+        (game_id, human_power, json.dumps(to_saved_game_format(game)), opponents, model, now, now),
     )
     c.commit()
+
+
+def seating(game_id: str) -> dict | None:
+    """Who sits where: the human's power, and whether the rest are bots or agents."""
+    r = _conn().execute("SELECT human_power, opponents, model FROM games WHERE id=?", (game_id,)).fetchone()
+    return None if r is None else {"human": r["human_power"], "opponents": r["opponents"], "model": r["model"]}
 
 
 def save_game(game_id: str, game: diplomacy.Game, last_result: dict | None = None) -> None:
@@ -117,6 +177,11 @@ def load_game(game_id: str) -> tuple[diplomacy.Game, str, dict | None] | None:
     return game, row["human_power"], result
 
 
+def last_result(game_id: str) -> dict | None:
+    r = _conn().execute("SELECT last_result FROM games WHERE id=?", (game_id,)).fetchone()
+    return json.loads(r["last_result"]) if r and r["last_result"] else None
+
+
 def list_games(limit: int = 50) -> list[dict]:
     rows = _conn().execute(
         "SELECT id, human_power, created_at, updated_at FROM games"
@@ -131,12 +196,13 @@ def delete_game(game_id: str) -> None:
 
 
 # ---------------------------------------------------------------- press
-def add_message(game_id: str, sender: str, recipient: str, text: str, phase: str) -> dict:
+def add_message(game_id: str, sender: str, recipient: str, text: str, phase: str,
+                kind: str = "text") -> dict:
     c = _conn()
-    m = {"sender": sender, "to": recipient, "text": text, "phase": phase, "at": _now()}
-    c.execute("INSERT INTO messages (game_id, sender, recipient, text, phase, at)"
-              " VALUES (?,?,?,?,?,?)",
-              (game_id, sender, recipient, text, phase, m["at"]))
+    m = {"sender": sender, "to": recipient, "text": text, "phase": phase, "at": _now(), "kind": kind}
+    c.execute("INSERT INTO messages (game_id, sender, recipient, text, phase, at, kind)"
+              " VALUES (?,?,?,?,?,?,?)",
+              (game_id, sender, recipient, text, phase, m["at"], kind))
     c.commit()
     return m
 
@@ -144,11 +210,11 @@ def add_message(game_id: str, sender: str, recipient: str, text: str, phase: str
 def messages_for(game_id: str, power: str) -> list[dict]:
     """Only what this power can see. Enforced here, not in the browser."""
     rows = _conn().execute(
-        "SELECT sender, recipient, text, phase, at FROM messages"
+        "SELECT id, sender, recipient, text, phase, at, kind FROM messages"
         " WHERE game_id=? AND (recipient='GLOBAL' OR sender=? OR recipient=?)"
         " ORDER BY id", (game_id, power, power)).fetchall()
-    return [{"sender": r["sender"], "to": r["recipient"], "text": r["text"],
-             "phase": r["phase"], "at": r["at"]} for r in rows]
+    return [{"id": r["id"], "sender": r["sender"], "to": r["recipient"], "text": r["text"],
+             "phase": r["phase"], "at": r["at"], "kind": r["kind"]} for r in rows]
 
 
 # ---------------------------------------------------------------- research
@@ -156,16 +222,18 @@ def save_chart(game_id: str, chart) -> None:
     """Replaces any earlier chart from the same power in the same phase."""
     from dataclasses import asdict
     c = _conn()
-    c.execute("INSERT OR REPLACE INTO charts (game_id, power, phase, commitments, plan, rejected, at)"
-              " VALUES (?,?,?,?,?,?,?)",
-              (game_id, chart.power, chart.phase, json.dumps([asdict(x) for x in chart.commitments]),
+    c.execute("INSERT OR REPLACE INTO charts (game_id, power, phase, round, commitments, plan, rejected, at)"
+              " VALUES (?,?,?,?,?,?,?,?)",
+              (game_id, chart.power, chart.phase, getattr(chart, "round", 0),
+               json.dumps([asdict(x) for x in chart.commitments]),
                json.dumps(chart.plan), json.dumps(chart.rejected), _now()))
     c.commit()
 
 
 def charts_in_phase(game_id: str, phase: str) -> list[dict]:
-    rows = _conn().execute("SELECT * FROM charts WHERE game_id=? AND phase=?", (game_id, phase)).fetchall()
-    return [{"power": r["power"], "commitments": json.loads(r["commitments"]),
+    rows = _conn().execute("SELECT * FROM charts WHERE game_id=? AND phase=? ORDER BY round",
+                           (game_id, phase)).fetchall()
+    return [{"power": r["power"], "round": r["round"], "commitments": json.loads(r["commitments"]),
              "plan": json.loads(r["plan"]), "rejected": json.loads(r["rejected"])} for r in rows]
 
 
@@ -198,3 +266,39 @@ def verdicts_for(game_id: str) -> list[dict]:
     return [{"phase": r["phase"], "commitment": json.loads(r["commitment"]), "verdict": r["verdict"],
              "intent": r["intent"], "reason": r["reason"]}
             for r in _conn().execute("SELECT * FROM verdicts WHERE game_id=? ORDER BY id", (game_id,))]
+
+
+# ---------------------------------------------------------------- agents
+def log_call(game_id: str, power: str, phase: str, step: str, model: str, prompt: str,
+             response: str | None, error: str | None, usage: dict) -> None:
+    c = _conn()
+    c.execute("INSERT INTO agent_calls (game_id, power, phase, step, model, prompt, response, error,"
+              " input_tokens, cached_tokens, output_tokens, cost_usd, latency_ms, at)"
+              " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              (game_id, power, phase, step, model, prompt, response, error,
+               usage.get("input_tokens", 0), usage.get("cached_tokens", 0), usage.get("output_tokens", 0),
+               usage.get("cost_usd", 0.0), usage.get("latency_ms", 0), _now()))
+    c.commit()
+
+
+def calls_for(game_id: str) -> list[dict]:
+    return [dict(r) for r in _conn().execute(
+        "SELECT * FROM agent_calls WHERE game_id=? ORDER BY id", (game_id,)).fetchall()]
+
+
+def game_cost(game_id: str) -> float:
+    r = _conn().execute("SELECT COALESCE(SUM(cost_usd),0) FROM agent_calls WHERE game_id=?", (game_id,)).fetchone()
+    return float(r[0])
+
+
+def add_note(game_id: str, power: str, phase: str, text: str) -> None:
+    c = _conn()
+    c.execute("INSERT INTO notes (game_id, power, phase, text, at) VALUES (?,?,?,?,?)",
+              (game_id, power, phase, text, _now()))
+    c.commit()
+
+
+def notes_for(game_id: str, power: str, limit: int = 6) -> list[dict]:
+    rows = _conn().execute("SELECT phase, text FROM notes WHERE game_id=? AND power=?"
+                           " ORDER BY rowid DESC LIMIT ?", (game_id, power, limit)).fetchall()
+    return [dict(r) for r in reversed(rows)]

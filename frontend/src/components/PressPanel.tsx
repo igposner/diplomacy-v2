@@ -3,13 +3,15 @@
 import { useMemo, useState } from "react";
 import { BORDER_INK, FILL, LABEL_INK, PARCHMENT_DARK, TOKEN, type Power } from "@/lib/map";
 
-export interface Press { sender: string; to: string; text: string; phase: string; at: string }
+export interface Press { sender: string; to: string; text: string; phase: string; at: string;
+                         kind?: "text" | "commitment" }
 
 const POWERS: Power[] = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"];
 
 export default function PressPanel({
-  me, messages, onSend,
-}: { me: Power; messages: Press[]; onSend: (to: string, text: string) => Promise<void> }) {
+  me, messages, onSend, agents = false, talking = false,
+}: { me: Power; messages: Press[]; onSend: (to: string, text: string) => Promise<void>;
+     agents?: boolean; talking?: boolean }) {
   const others = POWERS.filter((p) => p !== me);
   const [channel, setChannel] = useState<string>("GLOBAL");
   const [draft, setDraft] = useState("");
@@ -62,6 +64,11 @@ export default function PressPanel({
                        textTransform: "uppercase", color: "#7a6c50" }}>
           private to you and the recipient
         </span>
+        {talking && (
+          <span style={{ marginLeft: "auto", font: "italic 13px 'EB Garamond', serif", color: "#8a6414" }}>
+            the powers are talking…
+          </span>
+        )}
       </header>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, paddingBottom: 8 }}>
@@ -73,11 +80,28 @@ export default function PressPanel({
                     flexDirection: "column", gap: 8, padding: "6px 2px" }}>
         {shown.length === 0 && (
           <p style={{ font: "italic 14px 'EB Garamond', serif", color: "#7a6c50", margin: 0 }}>
-            Nothing here yet. Agents do not reply on their own until the LLM seats are wired up.
+            {agents ? "Nothing here yet. Nobody has to write; you can start."
+                    : "Nothing here yet. These opponents are scripted bots and do not answer."}
           </p>
         )}
         {shown.map((m, i) => {
           const mine = m.sender === me;
+          if (m.kind === "commitment") {
+            return (
+              <div key={i} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "88%",
+                                    borderLeft: `3px solid ${TOKEN[m.sender as Power] ?? LABEL_INK}`,
+                                    padding: "3px 0 3px 9px" }}>
+                <span style={{ font: "600 9px 'IBM Plex Mono', monospace", letterSpacing: 1.2,
+                               textTransform: "uppercase", color: "#7a6c50" }}>
+                  Commitment · {m.phase.split(" ").slice(0, 2).join(" ").toLowerCase()}
+                </span>
+                <p style={{ margin: "1px 0 0", font: "italic 15px 'EB Garamond', Georgia, serif",
+                            lineHeight: 1.4, color: LABEL_INK }}>
+                  {m.text}
+                </p>
+              </div>
+            );
+          }
           return (
             <div key={i} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "88%" }}>
               <div style={{ display: "flex", gap: 6, alignItems: "baseline",
