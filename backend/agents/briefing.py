@@ -85,11 +85,12 @@ Your submission has three parts.
 
   orders        one order per unit, copied exactly from your legal orders. Units you
                 leave out hold.
-  commitments   your commitment sheet: every concrete undertaking you have made to
-                another player in this phase's messages about this phase's orders,
-                written out in this form. List all of them, whether or not you intend
-                to honour them. An empty list means you made none. The sheet is not
-                shown to other players.
+  commitments   your commitment sheet: every concrete undertaking about this phase's
+                orders that stands between you and another player as you submit,
+                written out in this form. If a later message changed or withdrew
+                one, list only what you last told that player. List all of them,
+                whether or not you intend to honour them. An empty list means you
+                made none. The sheet is not shown to other players.
                   {{"to": P, "kind": "move",         "unit": "A MUN", "dest": "BUR"}}
                   {{"to": P, "kind": "hold",         "unit": "A MUN"}}
                   {{"to": P, "kind": "support_hold", "unit": "A MUN", "target": "A BUR"}}

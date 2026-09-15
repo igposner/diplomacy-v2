@@ -290,56 +290,63 @@ export default function GamePage() {
     }}>
       <div style={{
         flex: "1 1 auto", minWidth: 0, position: "relative", display: "flex", flexDirection: "column",
-        border: `2px solid ${BORDER_INK}`, background: PARCHMENT, padding: "32px 10px 8px",
+        border: `2px solid ${BORDER_INK}`, background: PARCHMENT, padding: "6px 10px 8px",
         boxShadow: "inset 0 0 36px rgba(90,70,35,.22), 0 2px 8px rgba(40,32,16,.28)",
       }}>
-        <div style={{ position: "absolute", top: 6, left: 10, right: 10, display: "flex",
-                      gap: 5, alignItems: "center", zIndex: 2 }}>
-          {ORDER.map((p) => (
-            <div key={p} title={past ? undefined : state?.clock?.submitted.includes(p) ? "orders submitted" : undefined}
-                 style={{
-              background: FILL[p], border: `1.5px solid ${BORDER_INK}`, borderRadius: 2,
-              padding: "2px 7px", display: "flex", alignItems: "center", gap: 5,
-              outline: p === seat ? `2px solid ${BORDER_INK}` : undefined,
-            }}>
-              <span style={{ font: "600 9px 'EB Garamond', serif", letterSpacing: 1.3,
-                             color: "#fdfaf2", textTransform: "uppercase" }}>{p.slice(0, 3)}</span>
-              <span style={{ font: "600 10px 'IBM Plex Mono', monospace", color: "#fdfaf2",
-                             background: TOKEN[p], borderRadius: 2, padding: "0 4px" }}>
-                {past ? past.powers[p]?.centers.length ?? 0 : sc(p)}
-              </span>
-              {!past && state?.clock?.submitted.includes(p) && (
-                <span style={{ font: "700 10px 'IBM Plex Mono', monospace", color: "#fdfaf2" }}>✓</span>
+        {/* The strip above the board. It wraps rather than overflowing: on a narrow
+            window the turn controls drop to a second row instead of into the sidebar. */}
+        <div style={{ flex: "none", display: "flex", flexWrap: "wrap", alignItems: "center",
+                      columnGap: 5, rowGap: 6, paddingBottom: 6 }}>
+          <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            {ORDER.map((p) => (
+              <div key={p} title={past ? undefined : state?.clock?.submitted.includes(p) ? "orders submitted" : undefined}
+                   style={{
+                background: FILL[p], border: `1.5px solid ${BORDER_INK}`, borderRadius: 2,
+                padding: "2px 7px", display: "flex", alignItems: "center", gap: 5,
+                outline: p === seat ? `2px solid ${BORDER_INK}` : undefined,
+              }}>
+                <span style={{ font: "600 9px 'EB Garamond', serif", letterSpacing: 1.3,
+                               color: "#fdfaf2", textTransform: "uppercase" }}>{p.slice(0, 3)}</span>
+                <span style={{ font: "600 10px 'IBM Plex Mono', monospace", color: "#fdfaf2",
+                               background: TOKEN[p], borderRadius: 2, padding: "0 4px" }}>
+                  {past ? past.powers[p]?.centers.length ?? 0 : sc(p)}
+                </span>
+                {!past && state?.clock?.submitted.includes(p) && (
+                  <span style={{ font: "700 10px 'IBM Plex Mono', monospace", color: "#fdfaf2" }}>✓</span>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5 }}>
+            <button onClick={() => router.push("/")} disabled={busy}
+                    style={{ font: "600 9px 'EB Garamond', serif", letterSpacing: 1.2,
+                             textTransform: "uppercase", padding: "3px 8px", borderRadius: 2,
+                             border: `1.5px solid ${BORDER_INK}`, background: "transparent",
+                             color: LABEL_INK, cursor: busy ? "wait" : "pointer", marginRight: 10 }}>
+              Lobby
+            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {arrow("back")}
+              {/* One line, the height of the arrows: a second line spills out of the strip. */}
+              <div style={{ height: 22, minWidth: 200, display: "flex", alignItems: "baseline",
+                            justifyContent: "center", gap: 7, padding: "0 4px", whiteSpace: "nowrap" }}>
+                <span style={{ font: "italic 600 17px/22px 'EB Garamond', Georgia, serif", color: LABEL_INK }}>
+                  {past ? pastTitle : "Present"}
+                </span>
+                <span style={{ font: "500 8.5px 'IBM Plex Mono', monospace", letterSpacing: 1.2,
+                               textTransform: "uppercase", color: "#7a6c50" }}>
+                  {past ? pastKind : `${nowTitle} · ${nowKind}`}
+                </span>
+              </div>
+              {arrow("forward")}
+              {secondsLeft !== null && !state?.done && (
+                <span title="time left in this phase"
+                      style={{ font: "600 13px 'IBM Plex Mono', monospace", minWidth: 40, textAlign: "right",
+                               color: secondsLeft <= 20 ? "#8f3328" : LABEL_INK, marginLeft: 6 }}>
+                  {clockText(secondsLeft)}
+                </span>
               )}
             </div>
-          ))}
-          <div style={{ flex: 1 }} />
-          <button onClick={() => router.push("/")} disabled={busy}
-                  style={{ font: "600 9px 'EB Garamond', serif", letterSpacing: 1.2,
-                           textTransform: "uppercase", padding: "3px 8px", borderRadius: 2,
-                           border: `1.5px solid ${BORDER_INK}`, background: "transparent",
-                           color: LABEL_INK, cursor: busy ? "wait" : "pointer", marginRight: 10 }}>
-            Lobby
-          </button>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {arrow("back")}
-            <div style={{ minWidth: 168, textAlign: "center", whiteSpace: "nowrap", lineHeight: 1 }}>
-              <div style={{ font: "italic 600 17px 'EB Garamond', Georgia, serif", color: LABEL_INK }}>
-                {past ? pastTitle : "Present"}
-              </div>
-              <div style={{ font: "500 8.5px 'IBM Plex Mono', monospace", letterSpacing: 1.2,
-                            textTransform: "uppercase", color: "#7a6c50", marginTop: 2 }}>
-                {past ? pastKind : `${nowTitle} · ${nowKind}`}
-              </div>
-            </div>
-            {arrow("forward")}
-            {secondsLeft !== null && !state?.done && (
-              <span title="time left in this phase"
-                    style={{ font: "600 13px 'IBM Plex Mono', monospace", minWidth: 40, textAlign: "right",
-                             color: secondsLeft <= 20 ? "#8f3328" : LABEL_INK, marginLeft: 6 }}>
-                {clockText(secondsLeft)}
-              </span>
-            )}
           </div>
         </div>
 

@@ -46,12 +46,10 @@ CREATE TABLE IF NOT EXISTS charts (          -- what an agent handed in beside i
     game_id     TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
     power       TEXT NOT NULL,
     phase       TEXT NOT NULL,
-    round       INTEGER NOT NULL DEFAULT 0,  -- press round the chart was written in
     commitments TEXT NOT NULL,               -- JSON list, may be empty
-    plan        TEXT NOT NULL,               -- JSON list: the private plan
     rejected    TEXT NOT NULL,               -- JSON list: what could not be scored, and why
     at          TEXT NOT NULL,
-    PRIMARY KEY (game_id, power, phase, round)
+    PRIMARY KEY (game_id, power, phase)
 );
 CREATE TABLE IF NOT EXISTS turns (           -- one row per power with units to order, per phase
     game_id  TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
@@ -66,7 +64,6 @@ CREATE TABLE IF NOT EXISTS verdicts (        -- every promise, scored against th
     phase      TEXT NOT NULL,
     commitment TEXT NOT NULL,                -- JSON
     verdict    TEXT NOT NULL,                -- KEPT | BROKEN | VOID
-    intent     TEXT NOT NULL,                -- PREMEDITATED | LATER | UNKNOWN
     reason     TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agent_calls (     -- every model call, in full, with its cost
@@ -125,10 +122,13 @@ _local = threading.local()
 
 
 def _migrate(c: sqlite3.Connection) -> None:
-    # charts gained a round in its primary key; it only ever held test data
-    if "round" not in {r[1] for r in c.execute("PRAGMA table_info(charts)")}:
-        c.execute("DROP TABLE charts")
-        c.executescript(_SCHEMA)
+    # Private plans, press rounds and intent were measured once and then dropped.
+    # Those tables only ever held test data, so an old shape is rebuilt, not migrated.
+    stale = {"charts": {"plan", "round"}, "verdicts": {"intent"}}
+    for table, cols in stale.items():
+        if cols & {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+            c.execute(f"DROP TABLE {table}")
+    c.executescript(_SCHEMA)
     c.commit()
 
 
@@ -240,22 +240,21 @@ def messages_for(game_id: str, power: str) -> list[dict]:
 
 # ---------------------------------------------------------------- research
 def save_chart(game_id: str, chart) -> None:
-    """Replaces any earlier chart from the same power in the same phase."""
+    """A player's final commitment sheet for the phase, written as it submits."""
     from dataclasses import asdict
     c = _conn()
-    c.execute("INSERT OR REPLACE INTO charts (game_id, power, phase, round, commitments, plan, rejected, at)"
-              " VALUES (?,?,?,?,?,?,?,?)",
-              (game_id, chart.power, chart.phase, getattr(chart, "round", 0),
+    c.execute("INSERT OR REPLACE INTO charts (game_id, power, phase, commitments, rejected, at)"
+              " VALUES (?,?,?,?,?,?)",
+              (game_id, chart.power, chart.phase,
                json.dumps([asdict(x) for x in chart.commitments]),
-               json.dumps(chart.plan), json.dumps(chart.rejected), _now()))
+               json.dumps(chart.rejected), _now()))
     c.commit()
 
 
 def charts_in_phase(game_id: str, phase: str) -> list[dict]:
-    rows = _conn().execute("SELECT * FROM charts WHERE game_id=? AND phase=? ORDER BY round",
-                           (game_id, phase)).fetchall()
-    return [{"power": r["power"], "round": r["round"], "commitments": json.loads(r["commitments"]),
-             "plan": json.loads(r["plan"]), "rejected": json.loads(r["rejected"])} for r in rows]
+    rows = _conn().execute("SELECT * FROM charts WHERE game_id=? AND phase=?", (game_id, phase)).fetchall()
+    return [{"power": r["power"], "commitments": json.loads(r["commitments"]),
+             "rejected": json.loads(r["rejected"])} for r in rows]
 
 
 def senders_in_phase(game_id: str, phase: str) -> set[str]:
@@ -271,9 +270,9 @@ def record_turn(game_id: str, phase: str, spoke: dict[str, bool], verdicts: list
     c.execute("DELETE FROM verdicts WHERE game_id=? AND phase=?", (game_id, phase))
     c.executemany("INSERT INTO turns (game_id, phase, power, spoke) VALUES (?,?,?,?)",
                   [(game_id, phase, p, int(v)) for p, v in spoke.items()])
-    c.executemany("INSERT INTO verdicts (game_id, phase, commitment, verdict, intent, reason)"
-                  " VALUES (?,?,?,?,?,?)",
-                  [(game_id, phase, json.dumps(v["commitment"]), v["verdict"], v["intent"], v["reason"])
+    c.executemany("INSERT INTO verdicts (game_id, phase, commitment, verdict, reason)"
+                  " VALUES (?,?,?,?,?)",
+                  [(game_id, phase, json.dumps(v["commitment"]), v["verdict"], v["reason"])
                    for v in verdicts])
     c.commit()
 
@@ -285,7 +284,7 @@ def turns_for(game_id: str) -> list[dict]:
 
 def verdicts_for(game_id: str) -> list[dict]:
     return [{"phase": r["phase"], "commitment": json.loads(r["commitment"]), "verdict": r["verdict"],
-             "intent": r["intent"], "reason": r["reason"]}
+             "reason": r["reason"]}
             for r in _conn().execute("SELECT * FROM verdicts WHERE game_id=? ORDER BY id", (game_id,))]
 
 

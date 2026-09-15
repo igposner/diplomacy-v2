@@ -62,8 +62,8 @@ query rather than the browser.
 screen in the winning power's colours and their 1901 flag.
 
 **A promise-keeping instrument.** When a player submits orders it also hands in a
-commitment sheet: every concrete promise it made in this phase's messages about this
-phase's orders. When the phase resolves, each promise is scored against the orders
+commitment sheet: every promise about this phase's orders that still stands, in the
+final form it gave it to each player. When the phase resolves, each promise is scored against the orders
 actually given (kept, broken, or void). Silence is counted separately and never
 scores as honesty. Results stay closed until the game ends. The rules are in
 `backend/research/commitments.py` and section 5.3 of the plan.
@@ -101,8 +101,8 @@ orders everyone gave, and which ones failed. The live board says "Present".
   then open `/game/<id>`.
 - **The commitment sheet is self-reported.** An agent that leaves off the promises it
   means to break looks more honest than it is. The full message text is stored so this
-  can be audited, but no audit exists yet. And because the sheet and the orders go in
-  together, a lie can no longer be told apart from a change of mind.
+  can be audited, but no audit exists yet. Only the last word is scored against the
+  last order; why a promise was broken is deliberately not measured.
 - **Once submitted, an agent stops for that phase,** including answering messages.
 - **No benchmark harness yet.** `scripts/play_agents.py` plays a headless game and
   prints cost, failures and promise-keeping; there is no multi-game runner or

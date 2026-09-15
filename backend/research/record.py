@@ -25,17 +25,10 @@ def record_phase(game_id: str, f: Facade) -> list[Scored]:
     orders = {p: f.game.get_orders(p) for p in POWERS}
     orderable = {p: set(legal[p]) for p in POWERS}
 
-    # Each promise is judged for intent against the plan written in the same
-    # sheet, not a later one. A promise repeated in a later round is one promise.
-    scored: list[Scored] = []
-    promises: list[Commitment] = []
-    seen: set[Commitment] = set()
-    for ch in storage.charts_in_phase(game_id, phase):
-        fresh = [c for c in map(_commitment, ch["commitments"]) if c not in seen]
-        seen.update(fresh)
-        promises += fresh
-        plans = {ch["power"]: ch["plan"]} if ch["plan"] else None
-        scored += score_phase(fresh, orders, orderable, plans, legal)
+    # The final sheet against the final orders. A promise listed twice is one promise.
+    promises = list(dict.fromkeys(_commitment(c) for ch in storage.charts_in_phase(game_id, phase)
+                                  for c in ch["commitments"]))
+    scored = score_phase(promises, orders, orderable, legal)
 
     # Silence means no word to anyone: no message and no promise.
     talked = storage.senders_in_phase(game_id, phase) | {c.speaker for c in promises}
@@ -43,7 +36,7 @@ def record_phase(game_id: str, f: Facade) -> list[Scored]:
     turns = {p: p in talked for p in active} if f.phase_type == "MOVEMENT" else {}
     storage.record_turn(game_id, phase, turns,
                         [{"commitment": asdict(s.commitment), "verdict": s.verdict,
-                          "intent": s.intent, "reason": s.reason} for s in scored])
+                          "reason": s.reason} for s in scored])
     return scored
 
 
@@ -56,5 +49,5 @@ def game_summary(game_id: str, humans: set[str]) -> dict[str, Summary]:
             row["spoke"].add(t["power"])
     for v in storage.verdicts_for(game_id):
         by_phase.setdefault(v["phase"], {"scored": [], "active": set(), "spoke": set()})["scored"].append(
-            Scored(_commitment(v["commitment"]), v["verdict"], v["intent"], v["reason"]))
+            Scored(_commitment(v["commitment"]), v["verdict"], v["reason"]))
     return summarize([(ph, r["scored"], r["active"], r["spoke"]) for ph, r in by_phase.items()], humans)
