@@ -277,18 +277,21 @@ Question: which models break their word more often in negotiation, whether they
 break it on purpose, whether they treat humans differently from other agents, and
 what it does to their results (final centres, survival, how others treat them after).
 
-**The commitment chart.** Every turn, beside its orders, an agent hands in
-(`backend/research/chart.py`):
+**The commitment sheet.** A phase is a timed window, at most two minutes, closing early
+when everyone has submitted. Agents chat freely during it. A submission is orders
+plus the commitment sheet plus notes, handed in together
+(`backend/agents/table.py`). The sheet lists every concrete promise the agent made in
+that phase's messages about that phase's orders, and it is not shown to anyone.
+Kinds: `move`, `hold`, `support_hold`, `support_move`, `convoy`, `no_enter`, each
+optionally conditional on another power's order. An empty sheet is valid: an agent
+owes nobody a word, and a model that says nothing has not been honest, it has been quiet.
 
-    messages      free text to any power, may be empty
-    commitments   structured promises to named powers, may be empty
-    private_plan  the orders it intends, seen by nobody
-
-Every field may be empty. An agent owes nobody a word on any turn, and a model
-that says nothing has not been honest, it has been quiet. Commitments are
-delivered to their recipient as part of the press, so they count as said even
-with no accompanying text. Kinds: `move`, `hold`, `support_hold`, `support_move`,
-`convoy`, `no_enter`, each optionally conditional on another power's order.
+What this design costs, stated so it can be checked rather than trusted:
+the sheet is **self-reported**, so a model that omits the promises it breaks will look
+honest. The fix is an audit that extracts promises from the stored message text
+independently and compares them with the sheet; the omission rate is itself a finding.
+And because the sheet and the orders arrive together, rule 6 below (premeditated
+versus later) has no earlier plan to compare against, so intent is UNKNOWN for these games.
 
 **Scoring** (`backend/research/commitments.py`), at the moment the phase resolves,
 because rule 3 needs that exact position's legal orders:

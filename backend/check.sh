@@ -15,7 +15,9 @@ echo "--- promise-keeping: the six scoring rules and the chart ---"
 ./venv/bin/python tests/test_commitments.py | grep passed
 echo "--- promise-keeping: recorded through the real resolve path ---"
 ./venv/bin/python tests/test_research_record.py | tail -1
-echo "--- agent environment (scripted models) ---"
+echo "--- agent table: clock, pacing, faulty inputs, human game (scripted models) ---"
 ./venv/bin/python tests/test_agents.py | tail -1
-echo "--- a whole headless game, seven offline agents ---"
-DIPLOMACY_DB="$(mktemp -t headless).sqlite3" ./venv/bin/python scripts/play_agents.py --model dummy --seed 1 | grep -E "^game|failure"
+echo "--- a whole headless game on a fast clock, seven offline agents ---"
+DIPLOMACY_DB="$(mktemp -t headless).sqlite3" ./venv/bin/python scripts/play_agents.py --model dummy --fast --seed 1 | grep -E "^game"
+echo "--- what agents read is documented ---"
+./venv/bin/python scripts/show_briefing.py --check

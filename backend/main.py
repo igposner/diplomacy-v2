@@ -2,7 +2,6 @@
 and nothing lives only in memory -- see storage.py."""
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import Literal
 
@@ -33,6 +32,7 @@ LIVE: dict[str, Facade] = {}
 HUMAN: dict[str, str] = {}
 TABLES: dict[str, Table] = {}   # agent games only; rebuilt from storage after a restart
 MODELS = make_model             # tests swap this for an offline model
+TABLE_OPTIONS: dict = {}        # and shorten the clock through this
 
 
 class NewGame(BaseModel):
@@ -40,7 +40,6 @@ class NewGame(BaseModel):
     advance: int = 0          # play this many phases with scripted bots first
     opponents: Literal["bots", "agents"] = "bots"
     model: str = "deepseek-flash"
-    rounds: int = 2           # press rounds per movement phase
 
 
 class Orders(BaseModel):
@@ -68,22 +67,6 @@ def get(game_id: str) -> Facade:
     return f
 
 
-def table(game_id: str) -> Table | None:
-    """The agents at this game, or None if the other seats are scripted bots."""
-    if game_id in TABLES:
-        return TABLES[game_id]
-    seat = storage.seating(game_id)
-    if not seat or seat["opponents"] != "agents":
-        return None
-    f = get(game_id)
-    model = MODELS(seat["model"])
-    t = Table(game_id, f, {p: model for p in POWERS if p != seat["human"]}, human=seat["human"])
-    TABLES[game_id] = t
-    if not storage.charts_in_phase(game_id, f.phase):
-        t.open_phase()      # the server went down before this phase's press began
-    return t
-
-
 def result_json(r: PhaseResult) -> dict:
     return {
         "phase": r.phase,
@@ -92,6 +75,39 @@ def result_json(r: PhaseResult) -> dict:
         "orders": [{"power": o.power, "order": o.order, "english": o.english,
                     "outcomes": o.outcomes, "ok": o.ok} for o in r.orders],
     }
+
+
+def resolve_phase(game_id: str, f: Facade) -> dict:
+    """Every order is in: score the promises while the position still exists, then play it."""
+    record_phase(game_id, f)
+    payload = result_json(f.process())
+    storage.save_game(game_id, f.game, payload)
+    return payload
+
+
+def table(game_id: str) -> Table | None:
+    """The agents at this game, or None if the other seats are scripted bots.
+    Building one starts its clock, so a restart picks the game up where it was."""
+    if game_id in TABLES:
+        return TABLES[game_id]
+    seat = storage.seating(game_id)
+    if not seat or seat["opponents"] != "agents":
+        return None
+    f = get(game_id)
+    model = MODELS(seat["model"])
+    t = _seat(game_id, f, model, seat["human"])
+    return t
+
+
+def _seat(game_id: str, f: Facade, model, human: str) -> Table:
+    async def resolve():
+        resolve_phase(game_id, f)
+    t = Table(game_id, f, {p: model for p in POWERS if p != human}, resolve=resolve, human=human,
+              **TABLE_OPTIONS)
+    TABLES[game_id] = t
+    if not f.done:
+        t.start()
+    return t
 
 
 @app.get("/api/health")
@@ -129,9 +145,7 @@ async def new_game(body: NewGame):
     HUMAN[gid] = power
     storage.create_game(gid, power, f.game, body.opponents, body.model if model else None)
     if model is not None:
-        t = Table(gid, f, {p: model for p in POWERS if p != power}, rounds=body.rounds, human=power)
-        TABLES[gid] = t
-        t.open_phase()
+        _seat(gid, f, model, power)
     return {"game_id": gid, "power": power, "phase": f.phase, "opponents": body.opponents}
 
 
@@ -148,17 +162,31 @@ async def state(game_id: str, power: str | None = None):
     t = table(game_id)
     out["opponents"] = "agents" if t else "bots"
     if t:
-        out["agents"] = {"model": next(iter(t.seats.values())).name,
-                         "negotiating": t.negotiating, "cost": round(storage.game_cost(game_id), 4)}
+        done = storage.submitted(game_id, f.phase)
+        out["clock"] = {"secondsLeft": round(t.seconds_left(), 1),
+                        "submitted": sorted(done & t.must_submit()),
+                        "waitingOn": sorted(t.waiting_on()),
+                        "youSubmitted": human in done}
+        out["myOrders"] = f.game.get_orders(human) if human else []
     return out
+
+
+@app.get("/api/games/{game_id}/history")
+async def history(game_id: str):
+    """Every phase already played, oldest first. Orders are public once resolved."""
+    return get(game_id).history()
 
 
 @app.post("/api/games/{game_id}/orders")
 async def orders(game_id: str, body: Orders):
+    """Save orders without handing them in. In a timed game this is what stands
+    if the clock runs out before you submit."""
     f = get(game_id)
     if f.done:
         return _finished(f)
     power = body.power.upper()
+    if table(game_id) and power in storage.submitted(game_id, f.phase):
+        raise HTTPException(409, "your orders for this phase are already submitted")
     bad = f.validate(power, body.orders)
     if bad:
         raise HTTPException(400, {"message": "illegal orders", "orders": bad})
@@ -173,33 +201,22 @@ def _finished(f: Facade) -> dict:
 
 
 async def _resolve(game_id: str, f: Facade, human: str | None) -> dict:
-    """Fill in the other powers and process. NEVER the human's seat: their
-    unordered units hold, which is the rule. Ordering them for them was a bug --
-    pressing resolve used to have a bot play your pieces."""
+    """Bot games only: fill in the other powers and process. NEVER the human's
+    seat: their unordered units hold, which is the rule."""
     if f.done:
         return _finished(f)
-    t = table(game_id)
-    if t:
-        await t.close_press()
-        await t.orders()
-    else:
-        bots = {p: GreedyBot(p) for p in POWERS if p != human}
-        for p, bot in bots.items():
-            if f.legal_orders(p) and not f.game.powers[p].orders:
-                f.game.set_orders(p, await bot.decide_orders(f.game))
-    record_phase(game_id, f)   # every order is in; score promises before the position is gone
-    r = f.process()
-    payload = result_json(r)
-    storage.save_game(game_id, f.game, payload)
-    if t:
-        t.open_phase()
+    bots = {p: GreedyBot(p) for p in POWERS if p != human}
+    for p, bot in bots.items():
+        if f.legal_orders(p) and not f.game.powers[p].orders:
+            f.game.set_orders(p, await bot.decide_orders(f.game))
+    payload = resolve_phase(game_id, f)
     return {**payload, "next": f.phase, "outcome": f.outcome}
 
 
 @app.post("/api/games/{game_id}/submit")
 async def submit(game_id: str, body: Orders):
-    """One action, as at a real table: hand in your orders and the turn goes
-    through. Everything resolves at once; anything you left unordered holds."""
+    """Hand in your orders. Against bots the turn resolves at once. At a timed
+    table it resolves when everyone has submitted or the clock runs out."""
     f = get(game_id)
     if f.done:
         return _finished(f)
@@ -207,6 +224,15 @@ async def submit(game_id: str, body: Orders):
     bad = f.validate(power, body.orders)
     if bad:
         raise HTTPException(400, {"message": "illegal orders", "orders": bad})
+    t = table(game_id)
+    if t:
+        if power in storage.submitted(game_id, f.phase):
+            raise HTTPException(409, "your orders for this phase are already submitted")
+        phase = f.phase
+        f.submit(power, body.orders)
+        storage.save_game(game_id, f.game)
+        t.submitted(power)
+        return {"submitted": True, "phase": phase, "waitingOn": sorted(t.waiting_on())}
     if body.orders:
         f.submit(power, body.orders)
     loaded = storage.load_game(game_id)
@@ -217,21 +243,24 @@ async def submit(game_id: str, body: Orders):
 @app.post("/api/games/{game_id}/process")
 async def process(game_id: str):
     f = get(game_id)
+    if table(game_id):
+        raise HTTPException(409, "a timed game resolves on its own clock")
     loaded = storage.load_game(game_id)
     return await _resolve(game_id, f, loaded[1] if loaded else HUMAN.get(game_id))
 
 
 @app.get("/api/games/{game_id}/research")
 async def research(game_id: str):
-    """Promise-keeping per power. Closed until the game ends: mid-game it would
-    tell a player who has been lying to them, which changes the game being measured."""
+    """Promise-keeping and faulty inputs per power. Closed until the game ends:
+    mid-game it would tell a player who has been lying to them."""
     f = get(game_id)
     if not f.done:
         raise HTTPException(403, "research data is available once the game is over")
     loaded = storage.load_game(game_id)
     humans = {loaded[1]} if loaded and loaded[1] else set()
     return {"summary": {p: s.to_dict() for p, s in game_summary(game_id, humans).items()},
-            "verdicts": storage.verdicts_for(game_id)}
+            "verdicts": storage.verdicts_for(game_id),
+            "faults": storage.fault_counts(game_id)}
 
 
 @app.get("/api/games/{game_id}/messages")
@@ -251,8 +280,4 @@ async def send_message(game_id: str, body: Message):
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "empty message")
-    m = storage.add_message(game_id, sender, to, text[:2000], f.phase)
-    t = table(game_id)
-    if t and sender == t.human:
-        t.message_from_human(to)
-    return m
+    return storage.add_message(game_id, sender, to, text[:2000], f.phase)

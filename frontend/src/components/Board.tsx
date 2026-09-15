@@ -191,7 +191,8 @@ export default function Board({
   ix: LegalIndex | null;
   entry: Entry;
   highlights: Set<string>;
-  orders: string[];
+  /** Plain strings are yours; tagged ones (history) are drawn in their power's colour. */
+  orders: (string | { order: string; power: string })[];
   /** Only passed while reviewing the phase that just resolved. */
   results?: { order: string; outcomes: string[]; ok?: boolean }[] | null;
   onProvince: (p: string, phase: "down" | "up") => void;
@@ -277,7 +278,9 @@ export default function Board({
         ) : null
       )}
 
-      {orders.map((o, i) => <DraftedOrder key={`o-${i}`} order={o} colour={TOKEN[me]} />)}
+      {orders.map((o, i) => typeof o === "string"
+        ? <DraftedOrder key={`o-${i}`} order={o} colour={TOKEN[me]} />
+        : <DraftedOrder key={`o-${i}`} order={o.order} colour={TOKEN[o.power as Power] ?? TOKEN[me]} />)}
 
       {Object.entries(state.powers).flatMap(([power, p]) =>
         p.units.map((u) => {

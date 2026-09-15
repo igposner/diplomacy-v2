@@ -28,7 +28,7 @@ export function describe(o: string): string {
 }
 
 export default function OrdersPanel({
-  power, orders, unordered, phaseType, adjust, onClear, onClearAll, onSubmit, busy, note,
+  power, orders, unordered, phaseType, adjust, onClear, onClearAll, onSubmit, busy, note, locked = false,
 }: {
   power: Power;
   orders: { loc: string; order: string }[];
@@ -42,6 +42,8 @@ export default function OrdersPanel({
   onSubmit: () => void;
   busy: boolean;
   note: string | null;
+  /** Submitted at a timed table: final until the phase resolves. */
+  locked?: boolean;
 }) {
   const owed = adjust ? adjust.builds + adjust.removals : 0;
   const total = adjust ? owed : orders.length + unordered.length;
@@ -63,7 +65,7 @@ export default function OrdersPanel({
                        : `${orders.length} of ${total} ${noun} ${verb}`}
         </span>
         <span style={{ flex: 1 }} />
-        {orders.length > 0 && (
+        {orders.length > 0 && !locked && (
           <button onClick={onClearAll}
                   style={{ border: 0, background: "transparent", color: "#7a6c50", cursor: "pointer",
                            font: "italic 13px 'EB Garamond', serif", textDecoration: "underline" }}>
@@ -101,9 +103,9 @@ export default function OrdersPanel({
               <div style={{ font: "500 10px 'IBM Plex Mono', monospace", color: "#8d7f62",
                             marginTop: 1 }}>{order}</div>
             </div>
-            <button onClick={() => onClear(loc)} aria-label={`Clear ${loc}`}
+            {!locked && <button onClick={() => onClear(loc)} aria-label={`Clear ${loc}`}
                     style={{ border: 0, background: "transparent", cursor: "pointer",
-                             color: "#8d7f62", font: "600 13px 'IBM Plex Mono', monospace" }}>×</button>
+                             color: "#8d7f62", font: "600 13px 'IBM Plex Mono', monospace" }}>×</button>}
           </div>
         ))}
         {adjust && owed > orders.length && (
@@ -122,12 +124,14 @@ export default function OrdersPanel({
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 10, flexWrap: "wrap" }}>
         {/* One action. Orders go in, the turn resolves, everything moves at once. */}
-        <button onClick={onSubmit} disabled={busy}
+        <button onClick={onSubmit} disabled={busy || locked}
                 style={{ font: "600 11px 'EB Garamond', serif", letterSpacing: 1.3,
                          textTransform: "uppercase", padding: "9px 15px", borderRadius: 2,
-                         border: `1.5px solid ${BORDER_INK}`, background: "#8a6414",
-                         color: "#fdfaf2", cursor: busy ? "wait" : "pointer" }}>
-          {busy ? "Orders going in…" : "Submit orders"}
+                         border: `1.5px solid ${BORDER_INK}`,
+                         background: locked ? "transparent" : "#8a6414",
+                         color: locked ? LABEL_INK : "#fdfaf2",
+                         cursor: busy ? "wait" : locked ? "default" : "pointer" }}>
+          {locked ? "Orders submitted ✓" : busy ? "Orders going in…" : "Submit orders"}
         </button>
         {note && (
           <span style={{ font: "italic 13px 'EB Garamond', serif",

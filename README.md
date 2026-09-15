@@ -61,31 +61,34 @@ query rather than the browser.
 **An ending.** A solo at eighteen centres ends the game, with a victory or defeat
 screen in the winning power's colours and their 1901 flag.
 
-**A promise-keeping instrument.** Each turn an agent may hand in a commitment
-chart: messages, structured promises to named powers, and a private plan. Any of it
-may be empty, since nobody has to say anything. When the phase resolves, every
-promise is scored against the orders actually given (kept, broken, or void), and a
-broken one is marked premeditated if the private plan already broke it. Silence is
-counted separately and never scores as honesty. Results are closed until the game
-ends. The rules are in `backend/research/commitments.py` and section 5.3 of the plan.
-Agents now hand these in; no real model has played yet.
+**A promise-keeping instrument.** When a player submits orders it also hands in a
+commitment sheet: every concrete promise it made in this phase's messages about this
+phase's orders. When the phase resolves, each promise is scored against the orders
+actually given (kept, broken, or void). Silence is counted separately and never
+scores as honesty. Results stay closed until the game ends. The rules are in
+`backend/research/commitments.py` and section 5.3 of the plan.
 
-**An environment for agents** (`backend/agents/`). Each agent gets a briefing when
-the game starts: the rules, order syntax, how a turn works, and its turn sheet. It
-is told plainly that it never has to say anything. Each movement phase runs two
-press rounds. Every agent answers from the same snapshot, so nobody reads what
-someone else wrote in the same round. A message arriving after the last round earns
-its recipient a reply turn, capped per phase. Then every agent gives orders and
-writes notes for its next turn. Agents see only their own press and the board;
-private plans reach nobody. An illegal order or unparseable reply gets one repair
-call; after that the unit holds. A provider failure is logged, and there is no bot
-fallback. Every call is stored with its prompt, response, tokens and cost, and
-each game has a cost cap. In the browser, agent messages appear as they arrive,
-and commitments are set apart from ordinary chat.
+**A timed table for agents** (`backend/agents/`). It runs like an online game. Every
+phase (moves, retreats, builds and removals) lasts at most two minutes and ends early
+once every player with something to order has submitted. You and the agents are on the
+same clock, and if it runs out, the orders you had entered but not submitted are
+played. Each agent acts whenever a message arrives, and every 20 seconds otherwise,
+never more than once every 5 seconds. At most 4 model calls run at once across the
+server. Agents are told they are playing six other players; nothing they read says
+anyone is an AI or a human, or that they are being measured. Exactly what they read
+is generated into [docs/AGENT_BRIEFING.md](docs/AGENT_BRIEFING.md).
 
-By default agents are not told their promises are scored, not told which seat is
-human, and not given a character. Some of the old character sketches carry
-attitudes to betrayal, which would make honesty a property of the seat.
+**Every input is recorded.** Each message, order, commitment and submission an agent
+attempts is a row in `agent_actions`, accepted or not, with the reason for anything
+faulty: unreadable replies, unknown fields, bad recipients, illegal or duplicate
+orders, malformed commitments, refused submissions, missed deadlines. A submission
+with any faulty entry is refused whole, and the agent is told why on its next turn.
+Every model call is stored with its prompt, response, tokens and cost, under a
+per-game cost cap. There is no bot fallback.
+
+**Turn history.** Arrows beside the phase name (or the left and right arrow keys)
+step back through every played turn. Each past turn shows the board as it stood, the
+orders everyone gave, and which ones failed. The live board says "Present".
 
 ## What does not work yet
 
@@ -96,9 +99,11 @@ attitudes to betrayal, which would make honesty a property of the seat.
 - **The lobby cannot start an agent game.** Until it can:
   `curl -XPOST localhost:8000/api/games -H 'content-type: application/json' -d '{"power":"FRANCE","opponents":"agents","model":"deepseek-flash"}'`
   then open `/game/<id>`.
-- **No deadlines.** If you submit before the agents' press rounds finish, the round
-  in flight completes and the rest are skipped.
-- **No history.** You can see the phase that just resolved, not earlier ones.
+- **The commitment sheet is self-reported.** An agent that leaves off the promises it
+  means to break looks more honest than it is. The full message text is stored so this
+  can be audited, but no audit exists yet. And because the sheet and the orders go in
+  together, a lie can no longer be told apart from a change of mind.
+- **Once submitted, an agent stops for that phase,** including answering messages.
 - **No benchmark harness yet.** `scripts/play_agents.py` plays a headless game and
   prints cost, failures and promise-keeping; there is no multi-game runner or
   leaderboard.

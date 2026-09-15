@@ -34,8 +34,8 @@ class Completion:
 
 @dataclass
 class Call:
-    """What the table asks for. `legal` and `step` are for offline models only;
-    a real model sees nothing but `system` and `prompt`."""
+    """What the table asks for. `legal`, `others` and `step` are for offline
+    models only; a real model sees nothing but `system` and `prompt`."""
     system: str
     prompt: str
     step: str
@@ -117,28 +117,27 @@ class Scripted:
 
 class Dummy:
     """A stand-in opponent for building the UI without a key: legal random orders,
-    the occasional short note, often silence. It is not an agent and never
+    the occasional short note, often nothing at all. It is not an agent and never
     pretends to be one; games using it are marked with its name."""
     name = "dummy"
 
-    def __init__(self, seed: int | None = None):
+    def __init__(self, seed: int | None = None, submit_chance: float = 0.4):
         self.rng = random.Random(seed)
+        self.submit_chance = submit_chance
 
     async def complete(self, call: Call) -> Completion:
-        rng = self.rng
-        if call.step == "orders" or call.step == "repair":
-            orders = [rng.choice(opts) for opts in call.legal.values()]
-            return Completion(json.dumps({"orders": orders, "notes": ""}))
-        if rng.random() < 0.5 or not call.others:
-            return Completion(json.dumps({"messages": [], "commitments": [], "private_plan": []}))
-        to = rng.choice(call.others)
-        return Completion(json.dumps({
-            "messages": [{"to": to, "text": rng.choice([
+        rng, out = self.rng, {}
+        if call.others and rng.random() < 0.35:
+            out["messages"] = [{"to": rng.choice(call.others), "text": rng.choice([
                 "Noted. I have no designs on your border this season.",
                 "What are you planning? I would rather know than guess.",
                 "We should talk before autumn.",
-                "Received. I will think on it."])}],
-            "commitments": [], "private_plan": []}))
+                "Received. I will think on it."])}]
+        if rng.random() < self.submit_chance or "Time is nearly up" in call.prompt:
+            builds = any(o.endswith((" B", " D")) for opts in call.legal.values() for o in opts)
+            orders = [] if builds else [rng.choice(opts) for opts in call.legal.values()]
+            out["submit"] = {"orders": orders, "commitments": [], "notes": ""}
+        return Completion(json.dumps(out))
 
 
 def make_model(name: str) -> Model:

@@ -9,9 +9,9 @@ export interface Press { sender: string; to: string; text: string; phase: string
 const POWERS: Power[] = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"];
 
 export default function PressPanel({
-  me, messages, onSend, agents = false, talking = false,
+  me, messages, onSend, agents = false,
 }: { me: Power; messages: Press[]; onSend: (to: string, text: string) => Promise<void>;
-     agents?: boolean; talking?: boolean }) {
+     agents?: boolean }) {
   const others = POWERS.filter((p) => p !== me);
   const [channel, setChannel] = useState<string>("GLOBAL");
   const [draft, setDraft] = useState("");
@@ -64,11 +64,7 @@ export default function PressPanel({
                        textTransform: "uppercase", color: "#7a6c50" }}>
           private to you and the recipient
         </span>
-        {talking && (
-          <span style={{ marginLeft: "auto", font: "italic 13px 'EB Garamond', serif", color: "#8a6414" }}>
-            the powers are talking…
-          </span>
-        )}
+
       </header>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, paddingBottom: 8 }}>

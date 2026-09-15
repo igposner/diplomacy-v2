@@ -17,6 +17,13 @@ POWERS = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"
 # (game.victory == [18]) but only ends a game through its own internal path, so
 # the rule is stated here where the rest of the game-level rules live.
 VICTORY_CENTERS = 18
+
+
+def long_phase(short: str) -> str:
+    """S1901M -> SPRING 1901 MOVEMENT, the form the rest of the code uses."""
+    season = {"S": "SPRING", "F": "FALL", "W": "WINTER"}[short[0]]
+    kind = {"M": "MOVEMENT", "R": "RETREATS", "A": "ADJUSTMENTS"}[short[-1]]
+    return f"{season} {short[1:5]} {kind}"
 # Without a cap a stalemate runs forever; at the cap the game is scored on
 # centres held, as agreed in docs/PLAN.md.
 FINAL_YEAR = 1920
@@ -132,10 +139,33 @@ class Facade:
         return [o for o in orders if o not in legal]
 
     def submit(self, power: str, orders: list[str]) -> None:
+        """Replace this power's orders for the phase. An empty list clears them."""
         bad = self.validate(power, orders)
         if bad:
             raise ValueError(f"illegal orders for {power}: {bad}")
-        self.game.set_orders(power, orders)
+        self.game.clear_orders(power)
+        if orders:
+            self.game.set_orders(power, orders)
+
+    def history(self) -> list[dict]:
+        """Every phase already played: the board as it stood, the orders given, what happened."""
+        out = []
+        for d in self.game.get_phase_history():
+            st = d.state
+            powers = {n: {"units": sorted(st["units"].get(n, [])), "centers": sorted(st["centers"].get(n, [])),
+                          "homes": sorted(st["homes"].get(n, []))} for n in self.game.powers}
+            results = {u: [str(r).upper() for r in rs if str(r)] for u, rs in (d.results or {}).items()}
+            orders = []
+            for n, os_ in (d.orders or {}).items():
+                for o in os_ or []:
+                    unit = " ".join(o.split()[:2])
+                    codes = results.get(unit, [])
+                    orders.append({"power": n, "order": o, "english": describe(o),
+                                   "outcomes": codes or ["OK"], "ok": not codes})
+            out.append({"phase": long_phase(d.name), "short": d.name, "powers": powers,
+                        "centerOwners": {c: n for n, p in powers.items() for c in p["centers"]},
+                        "orders": orders})
+        return out
 
     def process(self) -> PhaseResult:
         if self.done:

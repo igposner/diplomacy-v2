@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS games (
     last_result  TEXT,                   -- the phase that just resolved, or NULL
     opponents    TEXT NOT NULL DEFAULT 'bots',   -- bots | agents
     model        TEXT,                           -- the agents' model, when agents
+    deadline     REAL,                           -- unix time the current phase closes, agent games
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
@@ -85,6 +86,25 @@ CREATE TABLE IF NOT EXISTS agent_calls (     -- every model call, in full, with 
     latency_ms  INTEGER NOT NULL DEFAULT 0,
     at          TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS agent_actions (   -- every input an agent tried, accepted or not
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id  TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    power    TEXT NOT NULL,
+    phase    TEXT NOT NULL,
+    kind     TEXT NOT NULL,     -- response | message | order | commitment | submission | deadline
+    payload  TEXT NOT NULL,     -- exactly what it sent, as JSON
+    ok       INTEGER NOT NULL,  -- 0 = faulty
+    error    TEXT,              -- why it was refused
+    at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS actions_by_game ON agent_actions(game_id, power, ok);
+CREATE TABLE IF NOT EXISTS submissions (     -- who has handed in orders this phase
+    game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    phase   TEXT NOT NULL,
+    power   TEXT NOT NULL,
+    at      TEXT NOT NULL,
+    PRIMARY KEY (game_id, phase, power)
+);
 CREATE TABLE IF NOT EXISTS notes (           -- an agent's private notebook, carried turn to turn
     game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
     power   TEXT NOT NULL,
@@ -98,7 +118,8 @@ CREATE TABLE IF NOT EXISTS notes (           -- an agent's private notebook, car
 # alters an existing table, so an old database would silently lack them.
 _ADDED = [("messages", "kind", "TEXT NOT NULL DEFAULT 'text'"),
           ("games", "opponents", "TEXT NOT NULL DEFAULT 'bots'"),
-          ("games", "model", "TEXT")]
+          ("games", "model", "TEXT"),
+          ("games", "deadline", "REAL")]
 
 _local = threading.local()
 
@@ -302,3 +323,53 @@ def notes_for(game_id: str, power: str, limit: int = 6) -> list[dict]:
     rows = _conn().execute("SELECT phase, text FROM notes WHERE game_id=? AND power=?"
                            " ORDER BY rowid DESC LIMIT ?", (game_id, power, limit)).fetchall()
     return [dict(r) for r in reversed(rows)]
+
+
+def log_action(game_id: str, power: str, phase: str, kind: str, payload, ok: bool,
+               error: str | None = None) -> None:
+    c = _conn()
+    c.execute("INSERT INTO agent_actions (game_id, power, phase, kind, payload, ok, error, at)"
+              " VALUES (?,?,?,?,?,?,?,?)",
+              (game_id, power, phase, kind, json.dumps(payload), int(ok), error, _now()))
+    c.commit()
+
+
+def actions_for(game_id: str, faulty_only: bool = False) -> list[dict]:
+    q = "SELECT * FROM agent_actions WHERE game_id=?" + (" AND ok=0" if faulty_only else "") + " ORDER BY id"
+    return [{**dict(r), "payload": json.loads(r["payload"])} for r in _conn().execute(q, (game_id,))]
+
+
+def fault_counts(game_id: str) -> dict[str, dict]:
+    """power -> {attempts, faulty, by_kind: {kind: faulty}}"""
+    out: dict[str, dict] = {}
+    for r in _conn().execute("SELECT power, kind, COUNT(*) n, SUM(ok=0) bad FROM agent_actions"
+                             " WHERE game_id=? GROUP BY power, kind", (game_id,)):
+        row = out.setdefault(r["power"], {"attempts": 0, "faulty": 0, "byKind": {}})
+        row["attempts"] += r["n"]
+        row["faulty"] += r["bad"]
+        if r["bad"]:
+            row["byKind"][r["kind"]] = r["bad"]
+    return out
+
+
+def mark_submitted(game_id: str, phase: str, power: str) -> None:
+    c = _conn()
+    c.execute("INSERT OR IGNORE INTO submissions (game_id, phase, power, at) VALUES (?,?,?,?)",
+              (game_id, phase, power, _now()))
+    c.commit()
+
+
+def submitted(game_id: str, phase: str) -> set[str]:
+    return {r["power"] for r in _conn().execute(
+        "SELECT power FROM submissions WHERE game_id=? AND phase=?", (game_id, phase))}
+
+
+def set_deadline(game_id: str, deadline: float | None) -> None:
+    c = _conn()
+    c.execute("UPDATE games SET deadline=? WHERE id=?", (deadline, game_id))
+    c.commit()
+
+
+def deadline(game_id: str) -> float | None:
+    r = _conn().execute("SELECT deadline FROM games WHERE id=?", (game_id,)).fetchone()
+    return r["deadline"] if r else None
