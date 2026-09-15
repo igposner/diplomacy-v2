@@ -120,6 +120,13 @@ export type Entry =
 
 const base = (p: string) => p.split("/")[0];
 
+/** The unit standing in province p, named as its orders name it. A fleet on a
+    split coast is "SPA/SC" in every order, though the engine files those orders
+    under plain "SPA", so look at the orders' own unit names first. */
+function unitAt(ix: LegalIndex, p: string): string | undefined {
+  return [...ix.kind.keys()].find((l) => base(l) === p) ?? [...ix.all.keys()].find((l) => base(l) === p);
+}
+
 /** Provinces that should light up as clickable in the current state. */
 export function targets(ix: LegalIndex, e: Entry): Set<string> {
   const out = new Set<string>();
@@ -224,7 +231,7 @@ export function click(ix: LegalIndex, e: Entry, p: string): Step {
       const opts = ix.build.get(p);
       if (opts?.length)
         return { next: { kind: "choice", loc: p, prompt: `Build in ${p}`, options: opts } };
-      const here = [...ix.all.keys()].find((l) => base(l) === p);
+      const here = unitAt(ix, p);
       return here ? { next: { kind: "unit", loc: here } } : { next: e };
     }
 
@@ -238,7 +245,7 @@ export function click(ix: LegalIndex, e: Entry, p: string): Step {
       const r = hit(ix.move.get(e.loc));
       if (r && "multi" in r) return { next: coastPrompt(e.loc, p, r.multi!) };
       if (r) return { next: { kind: "idle" }, order: r.order };
-      const here = [...ix.all.keys()].find((l) => base(l) === p);
+      const here = unitAt(ix, p);
       return here ? { next: { kind: "unit", loc: here } } : { next: { kind: "idle" } };
     }
 

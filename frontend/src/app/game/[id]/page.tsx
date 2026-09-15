@@ -13,7 +13,9 @@ import { BORDER_INK, FILL, LABEL_INK, PARCHMENT, PARCHMENT_DARK, TOKEN, type Pow
 const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
 const ORDER: Power[] = ["ENGLAND", "FRANCE", "GERMANY", "ITALY", "AUSTRIA", "RUSSIA", "TURKEY"];
 const base = (p: string) => p.split("/")[0];
-const unitOf = (order: string) => order.split(" ")[1];
+/* The draft is keyed by province ("SPA"), as the orderable list is, even when the
+   order names a coast ("F SPA/SC - WES"). */
+const unitOf = (order: string) => base(order.split(" ")[1]);
 
 interface Clock { secondsLeft: number; submitted: string[]; waitingOn: string[]; youSubmitted: boolean }
 

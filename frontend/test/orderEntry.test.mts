@@ -149,4 +149,28 @@ assert.deepEqual(modes(rIx, { kind: "unit", loc: "BUR" }).map((m) => m.label), [
 ok("a dislodged unit is offered Retreat, not Move");
 assert.deepEqual(modes(cIx, idle), []); ok("no modes with nothing selected");
 
+// A fleet standing on a split coast. The engine files its orders under the bare
+// province ("SPA") while every order names the coast ("F SPA/SC ..."). Clicking
+// Spain once selected "SPA", matched none of its moves, and the fleet could not move.
+{
+  const coastal = indexLegal({
+    SPA: ["F SPA/SC H", "F SPA/SC - MAR", "F SPA/SC - WES", "F SPA/SC - POR", "F SPA/SC S F MAR"],
+    MAR: ["F MAR H", "F MAR - SPA/SC"],
+    PAR: ["A PAR H", "A PAR - BUR"],
+  });
+  const sel = click(coastal, idle, "SPA");
+  assert.deepEqual(sel.next, { kind: "unit", loc: "SPA/SC" });
+  ok("clicking a fleet on a split coast selects it on its coast");
+  assert.deepEqual([...targets(coastal, sel.next)].sort(), ["MAR", "POR", "SPA", "WES"]);
+  ok("its destinations light up");
+  assert.equal(click(coastal, sel.next, "WES").order, "F SPA/SC - WES");
+  ok("clicking one orders the move");
+  assert.equal(click(coastal, sel.next, "SPA").order, "F SPA/SC H");
+  ok("clicking Spain again orders a hold");
+  assert.equal(click(coastal, { kind: "unit", loc: "MAR" }, "SPA").order, "F MAR - SPA/SC");
+  ok("a unit that can move into Spain still moves there when Spain is clicked");
+  assert.deepEqual(click(coastal, { kind: "unit", loc: "PAR" }, "SPA").next, { kind: "unit", loc: "SPA/SC" });
+  ok("from a unit that cannot reach Spain, clicking the coastal fleet switches to it");
+}
+
 console.log(`\n${n} checks passed`);
