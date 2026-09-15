@@ -17,14 +17,17 @@ const base = (p: string) => p.split("/")[0];
 const HILITE = "#8a6414";
 
 /* ---------------------------------------------------------------- pieces */
-function Token({ power, kind, x, y, selected }:
-  { power: Power; kind: "A" | "F"; x: number; y: number; selected?: boolean }) {
+/* Your own pieces stand on a pale disc, so telling yours from theirs never
+   depends on reading the colours. */
+function Token({ power, kind, x, y, selected, mine }:
+  { power: Power; kind: "A" | "F"; x: number; y: number; selected?: boolean; mine?: boolean }) {
   const body = TOKEN[power];
   const rim = "#f4ecd8";
   return (
     <g style={{ pointerEvents: "none" }}>
       {selected && <circle cx={x} cy={y} r={26} fill={HILITE} fillOpacity={0.25}
                            stroke={HILITE} strokeWidth={3} />}
+      {mine && <circle cx={x} cy={y + 1} r={20} fill="#fdfaf2" stroke={BORDER_INK} strokeWidth={2.2} />}
       <ellipse cx={x} cy={y + 13} rx={15} ry={4.2} fill="#2b2419" fillOpacity={0.3} />
       {kind === "A" ? (
         <g fill={body} stroke={rim} strokeWidth={1.8} strokeLinejoin="round">
@@ -154,12 +157,12 @@ function adjustMarks(orders: { order: string; power: Power; ok?: boolean }[]): A
   return out;
 }
 
-function AdjustSign({ mark, onBoard }: { mark: AdjustMark; onBoard: boolean }) {
+function AdjustSign({ mark, onBoard, me }: { mark: AdjustMark; onBoard: boolean; me: Power }) {
   const a = unitAnchor(mark.loc);
   if (!a) return null;
   const [x, y] = a;
   const name = `${mark.kind === "A" ? "Army" : "Fleet"} ${mark.add ? "built in" : "removed from"} ${base(mark.loc)}`;
-  const piece = <Token power={mark.power} kind={mark.kind} x={x} y={y} />;
+  const piece = <Token power={mark.power} kind={mark.kind} x={x} y={y} mine={mark.power === me} />;
   if (mark.add) {
     return (
       <g style={{ pointerEvents: "none" }}>
@@ -340,6 +343,7 @@ export default function Board({
           const a = unitAnchor(loc);
           return a ? (
             <Token key={`${power}-${u}`} power={power as Power} kind={kind} x={a[0]} y={a[1]}
+                   mine={power === me}
                    selected={selectedLoc != null && base(selectedLoc) === base(loc)} />
           ) : null;
         })
@@ -353,7 +357,7 @@ export default function Board({
       ]).map((mk) => {
         const here = Object.values(state.powers).some((p) =>
           p.units.some((u) => base(splitUnit(u).loc) === base(mk.loc)));
-        return <AdjustSign key={`adj-${mk.power}-${mk.loc}`} mark={mk} onBoard={here} />;
+        return <AdjustSign key={`adj-${mk.power}-${mk.loc}`} mark={mk} onBoard={here} me={me} />;
       })}
 
       <rect x={0} y={0} width={MAP.viewBox[2]} height={MAP.viewBox[3]} fill="url(#vignette)"
