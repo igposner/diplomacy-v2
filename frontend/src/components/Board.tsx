@@ -17,7 +17,7 @@ const base = (p: string) => p.split("/")[0];
 const HILITE = "#8a6414";
 
 /* ---------------------------------------------------------------- pieces */
-/* Your own pieces stand on a pale disc, so telling yours from theirs never
+/* Your own pieces carry a soft glow, so telling yours from theirs never
    depends on reading the colours. */
 function Token({ power, kind, x, y, selected, mine }:
   { power: Power; kind: "A" | "F"; x: number; y: number; selected?: boolean; mine?: boolean }) {
@@ -27,7 +27,7 @@ function Token({ power, kind, x, y, selected, mine }:
     <g style={{ pointerEvents: "none" }}>
       {selected && <circle cx={x} cy={y} r={26} fill={HILITE} fillOpacity={0.25}
                            stroke={HILITE} strokeWidth={3} />}
-      {mine && <circle cx={x} cy={y + 1} r={20} fill="#fdfaf2" stroke={BORDER_INK} strokeWidth={2.2} />}
+      {mine && <circle cx={x} cy={y + 1} r={24} fill="url(#mineGlow)" />}
       <ellipse cx={x} cy={y + 13} rx={15} ry={4.2} fill="#2b2419" fillOpacity={0.3} />
       {kind === "A" ? (
         <g fill={body} stroke={rim} strokeWidth={1.8} strokeLinejoin="round">
@@ -285,6 +285,12 @@ export default function Board({
           <rect width="9" height="9" fill={UNPLAYABLE} />
           <path d="M0 0 V9" stroke={BORDER_INK} strokeWidth={2.2} strokeOpacity={0.5} />
         </pattern>
+        {/* The glow behind your own pieces. */}
+        <radialGradient id="mineGlow">
+          <stop offset="0%" stopColor="#fffbea" stopOpacity={0.95} />
+          <stop offset="55%" stopColor="#fffbea" stopOpacity={0.7} />
+          <stop offset="100%" stopColor="#fffbea" stopOpacity={0} />
+        </radialGradient>
         <radialGradient id="vignette" cx="50%" cy="48%" r="72%">
           <stop offset="55%" stopColor="#000" stopOpacity="0" />
           <stop offset="100%" stopColor="#3a2f1c" stopOpacity="0.20" />
