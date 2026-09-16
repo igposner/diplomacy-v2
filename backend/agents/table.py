@@ -29,6 +29,7 @@ anything faulty. Every model call is stored in agent_calls with its cost.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import os
 import re
@@ -65,6 +66,11 @@ def _same(text: str) -> str:
     return " ".join(str(text).split()).lower()
 
 
+def _alike(a: str, b: str) -> float:
+    """How much two messages say the same thing. Models paraphrase themselves."""
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
 def _json(text: str) -> tuple[dict, str | None]:
     """The object, and a note if the reply needed rescuing. Models sometimes send
     two objects in a row; the first one is the answer."""
@@ -83,8 +89,9 @@ class Table:
     def __init__(self, game_id: str, facade: Facade, seats: dict[str, Model], *,
                  resolve: Callable[[], Awaitable[None]], human: str | None = None,
                  phase_seconds: float = 120, min_open: float = 45.0, min_interval: float = 5.0,
-                 idle_after: float = 20.0, final_call: float = 25.0, cost_cap_usd: float = 5.0,
-                 characters: bool = False, idle_pause: float = 60.0):
+                 idle_after: float = 45.0, final_call: float = 25.0, cost_cap_usd: float = 5.0,
+                 characters: bool = False, idle_pause: float = 60.0,
+                 unanswered_cap: int = 2, alike_enough: float = 0.8):
         self.game_id, self.f, self.seats, self.human = game_id, facade, seats, human
         self.resolve = resolve
         self.phase_seconds, self.min_interval = phase_seconds, min_interval
@@ -95,6 +102,9 @@ class Table:
         # A game plays on by itself, so it stops when nobody is watching it: the
         # browser asking for the state is what counts as watching.
         self.idle_pause = idle_pause
+        # Nobody may keep talking at a player who has not answered: agents wrote
+        # the same offer six ways in a row to a human who never replied.
+        self.unanswered_cap, self.alike_enough = unanswered_cap, alike_enough
         self.seen = time.monotonic()
         self.task: asyncio.Task | None = None
         self.phase_done = asyncio.Event()
@@ -209,7 +219,11 @@ class Table:
                      if m["phase"] == phase and m["sender"] != power]
             newest = max((m["id"] for m in inbox), default=0)
             final = left <= self.final_call and not warned
-            due = first or newest > seen or feedback or final or now - last_call >= self.idle_after
+            # A refused submission is worth another turn at once -- its orders are
+            # not in. A refused message is not: it was told to stop, so waking it
+            # straight back up would only have it try again.
+            urgent = any(f.startswith(("Submission refused", "Your reply was not")) for f in feedback)
+            due = first or newest > seen or urgent or final or now - last_call >= self.idle_after
             if self.is_paused:
                 await asyncio.sleep(0.2)
                 continue
@@ -226,7 +240,8 @@ class Table:
             power=power, state=self.f.state(power), legal=self.f.legal_orders(power), seconds_left=left,
             submitted=self.must_submit() - waiting, waiting=waiting,
             press=self._visible_press(power), notes=storage.notes_for(self.game_id, power),
-            last_result=storage.last_result(self.game_id), feedback=feedback, final_call=final),
+            last_result=storage.last_result(self.game_id), feedback=feedback, final_call=final,
+            unanswered=self.unanswered(power, phase)),
             "act", power, self.f.legal_orders(power), [p for p in POWERS if p != power])
         model = self.seats[power]
 
@@ -304,10 +319,38 @@ class Table:
             return "the message has no text"
         if len(text) > 2000:
             return f"the message is {len(text)} characters; the limit is 2000"
-        if _same(text) in {_same(x["text"]) for x in storage.messages_for(self.game_id, power)
-                           if x["phase"] == phase and x["sender"] == power and x["to"] == to}:
-            return f"you have already sent this to {to} this phase; say something new or say nothing"
+        thread = [x for x in storage.messages_for(self.game_id, power)
+                  if x["phase"] == phase and to in (x["sender"], x["to"])]
+        answered = max((x["id"] for x in thread if x["sender"] == to), default=0)
+        mine = [x for x in thread if x["sender"] == power and x["to"] == to]
+        said = _same(text)
+        for earlier in mine:
+            before = _same(earlier["text"])
+            # Short notes ("agreed", "yes") are allowed to look alike; a reworded
+            # speech is not. Only real messages are compared for paraphrase.
+            same = said == before or (min(len(said), len(before)) > 40
+                                      and _alike(said, before) >= self.alike_enough)
+            if same:
+                return (f"you have already said this to {to} this phase; say something new "
+                        "or say nothing")
+        waiting = [x for x in mine if x["id"] > answered]
+        if len(waiting) >= self.unanswered_cap:
+            return (f"{to} has not answered your last {len(waiting)} messages this phase; "
+                    "wait for a reply before writing to them again")
         return None
+
+    def unanswered(self, power: str, phase: str) -> list[str]:
+        """Who this power is waiting on, for its own turn prompt."""
+        mine = [m for m in storage.messages_for(self.game_id, power) if m["phase"] == phase]
+        out = []
+        for other in POWERS:
+            if other == power:
+                continue
+            answered = max((m["id"] for m in mine if m["sender"] == other), default=0)
+            waiting = [m for m in mine if m["sender"] == power and m["to"] == other and m["id"] > answered]
+            if waiting:
+                out.append(f"{other} ({len(waiting)} message{'s' if len(waiting) > 1 else ''} unanswered)")
+        return out
 
     def _submit(self, power: str, phase: str, sub) -> list[str]:
         if not isinstance(sub, dict):

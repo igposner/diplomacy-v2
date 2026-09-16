@@ -75,8 +75,10 @@ often otherwise. Each time you may write to any players, submit your orders, bot
 nothing at all. You never have to say anything. Every message is private between you and
 the one player you address it to; there is no way to speak to the table at once.
 
-Do not send anyone the same message twice: a repeat is refused. If you have nothing new
-to say to someone, say nothing to them.
+Do not send anyone the same message twice, in the same words or reworded: a repeat is
+refused. Do not keep talking at someone who has not answered you: after two unanswered
+messages to a player in one phase, a third is refused until they reply. Give people time
+to think; if you have nothing new to say to someone, say nothing to them.
 
 Submitting is not final. You may keep writing, and you may submit again to change your
 orders, until the phase closes; what stands at the close is what is played. If a
@@ -165,7 +167,8 @@ def _clock(seconds: float) -> str:
 
 def turn_prompt(*, power: str, state: dict, legal: dict[str, list[str]], seconds_left: float,
                 submitted: set[str], waiting: set[str], press: list[dict], notes: list[dict],
-                last_result: dict | None, feedback: list[str], final_call: bool) -> str:
+                last_result: dict | None, feedback: list[str], final_call: bool,
+                unanswered: list[str] | None = None) -> str:
     parts = [
         f"PHASE: {state['phase']}    TIME LEFT: {_clock(seconds_left)}",
         "SUBMITTED: " + (", ".join(sorted(submitted)) or "nobody yet")
@@ -182,6 +185,8 @@ def turn_prompt(*, power: str, state: dict, legal: dict[str, list[str]], seconds
         "",
         "MESSAGES YOU HAVE SENT AND RECEIVED (this phase and the last)",
         _press(power, press),
+        "",
+        "STILL WAITING ON A REPLY FROM: " + (", ".join(unanswered) if unanswered else "(nobody)"),
         "",
         "YOUR LEGAL ORDERS THIS PHASE",
         "\n".join(f"{loc}: {' | '.join(opts)}" for loc, opts in legal.items()),

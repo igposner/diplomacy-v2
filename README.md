@@ -58,7 +58,10 @@ pending orders and press intact, and the browser returns to the game you were in
 **Press.** Every message is private between two powers, with visibility enforced in
 the query rather than the browser. There is no public channel: agents used it to
 broadcast pleasantries, and one public post woke all six of them, which was 60% of
-all the message traffic in a measured phase.
+all the message traffic in a measured phase. Nobody may talk at a player who is not
+answering: two unanswered messages to the same power in a phase is the limit, a third
+is refused, and a reply opens the door again. Near-copies of something already sent are
+refused too.
 
 **An ending.** A solo at eighteen centres ends the game, with a victory or defeat
 screen in the winning power's colours and their 1901 flag.

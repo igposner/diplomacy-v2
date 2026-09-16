@@ -60,6 +60,7 @@ assert set(re.findall(r'"kind": "(\w+)"', b)) == set(KINDS)
 assert "not shown to other players" in flat and "none of it is accepted" in flat
 assert "GLOBAL" not in b and "no way to speak to the table at once" in flat
 assert "Do not send anyone the same message twice" in flat
+assert "after two unanswered messages to a player in one phase, a third is refused" in flat
 ok("the briefing covers the rules, the clock and its window, silence, revising and the sheet")
 
 f0 = Facade()
@@ -81,7 +82,11 @@ async def pacing() -> None:
         stamps.setdefault(call.power, []).append(time.monotonic())
         if call.power in ("ENGLAND", "FRANCE"):     # two players who answer each other at once
             to = "FRANCE" if call.power == "ENGLAND" else "ENGLAND"
-            return {"messages": [{"to": to, "text": f"ping {len(stamps[call.power])}"}]}
+            n = len(stamps[call.power])
+            said = ["The Channel, then. What do you want for it?", "Belgium is the price, and Holland is yours.",
+                    "Holland suits me. Will you support Norway in the autumn?", "Norway if you keep Burgundy empty.",
+                    "Burgundy stays empty. Write to me before the builds.", "Agreed on all of it. Until winter."]
+            return {"messages": [{"to": to, "text": said[n % len(said)]}]}
         return {}
     f, t, _ = new_table("t-pace", fn, min_interval=0.3, idle_after=10, phase_seconds=2.0, final_call=0.2)
     await t.play_phase()
@@ -193,7 +198,7 @@ async def faults() -> None:
        f"({', '.join(sorted(set(kinds)))})")
     reasons = " | ".join(e for _, e in bad)
     for needle in ["not a JSON object", "unknown recipient 'MARS'", "cannot write to yourself", "no text",
-                   "no public channel", "already sent this to FRANCE",
+                   "no public channel", "already said this to FRANCE",
                    "unknown fields ignored: ['commitments']", "'A MUN - PAR' is not one of your legal orders",
                    "missing ['dest']", "second order for MUN"]:
         assert needle in reasons, needle
@@ -316,6 +321,55 @@ async def pausing() -> None:
     ok("looking at the game again starts it up, without a button")
     run.cancel()
     await asyncio.gather(run, return_exceptions=True)
+
+
+async def nagging() -> None:
+    """Agents wrote the same offer six ways to a human who never answered."""
+    lines = ["Italy here, I'm going fleet Ionian, nothing aimed at you. Interested in Austria?",
+             "Italy here -- last call before orders lock. Going F ION, nothing toward you. Austria is the shared problem.",
+             "Turkey, still nothing from you. I'm going F ION as promised; Austria is the shared problem.",
+             "Turkey, final word: F ION, and I mean it about Austria being our shared problem."]
+    turn = {"n": 0}
+    def fn(call: Call):
+        if call.power != "ITALY":
+            return submit_holds(call)
+        turn["n"] += 1
+        i = min(turn["n"], len(lines)) - 1
+        return {"messages": [{"to": "TURKEY", "text": lines[i]}]}
+
+    # idle wake set to a third of the phase, as it is in a real game (45s of 120s)
+    f, t, _ = new_table("t-nag", fn, phase_seconds=3, min_open=2.9, min_interval=0.05, idle_after=1.0)
+    await t.play_phase()
+    sent = [m for m in storage.messages_for("t-nag", "TURKEY") if m["sender"] == "ITALY"]
+    assert len(sent) == 2, [m["text"][:40] for m in sent]
+    ok(f"a player who never answers hears twice, not {turn['n']} times")
+
+    refusals = [a["error"] for a in storage.actions_for("t-nag", faulty_only=True)
+                if a["power"] == "ITALY" and a["kind"] == "message"]
+    assert refusals and all("has not answered your last 2" in str(e) for e in refusals), refusals
+    assert len(refusals) <= 3, f"{len(refusals)} refusals: a refused message should not wake it straight back up"
+    ok(f"the third is refused and says why, and it is not woken to try again ({len(refusals)} attempts)")
+
+    # Near-copies are caught by text; real rewordings score far lower (the ones
+    # from a live game scored 0.36-0.61), which is why the cap above does the work.
+    first = "I will keep my fleet out of the Adriatic if you keep yours out of Trieste's waters this spring."
+    assert t._message_error("FRANCE", "SPRING 1901 MOVEMENT", {"to": "ENGLAND", "text": first}) is None
+    storage.add_message("t-nag", "FRANCE", "ENGLAND", first, "SPRING 1901 MOVEMENT")
+    tweaked = t._message_error("FRANCE", "SPRING 1901 MOVEMENT",
+                               {"to": "ENGLAND", "text": first.replace("I will", "I'll")})
+    assert tweaked and "already said this" in tweaked, tweaked
+    assert t._message_error("FRANCE", "SPRING 1901 MOVEMENT", {"to": "ENGLAND", "text": "Agreed."}) is None
+    ok("a near-copy is refused as a repeat, while a short note like \"Agreed.\" is not")
+
+    prompts = [c["prompt"] for c in storage.calls_for("t-nag") if c["power"] == "ITALY"]
+    assert any("STILL WAITING ON A REPLY FROM: TURKEY (2 messages unanswered)" in p for p in prompts)
+    ok("its own turn prompt tells it who it is waiting on, so it can judge for itself")
+
+    # a reply clears the count
+    storage.add_message("t-nag", "TURKEY", "ITALY", "Fine. Talk after spring.", "SPRING 1901 MOVEMENT")
+    assert t._message_error("ITALY", "SPRING 1901 MOVEMENT",
+                            {"to": "TURKEY", "text": "Good. Then Trieste is the target in 1902."}) is None
+    ok("once they answer, the door opens again")
 
 
 async def slow_and_costly() -> None:
@@ -442,6 +496,7 @@ async def run():
     await pacing()
     await clock()
     await keeps_talking()
+    await nagging()
     await pausing()
     await faults()
     await slow_and_costly()
