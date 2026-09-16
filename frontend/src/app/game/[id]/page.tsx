@@ -17,7 +17,8 @@ const base = (p: string) => p.split("/")[0];
    order names a coast ("F SPA/SC - WES"). */
 const unitOf = (order: string) => base(order.split(" ")[1]);
 
-interface Clock { secondsLeft: number; submitted: string[]; waitingOn: string[]; youSubmitted: boolean }
+interface Clock { secondsLeft: number; submitted: string[]; waitingOn: string[]; youSubmitted: boolean;
+                  paused?: "manual" | "idle" | null }
 
 interface State extends BoardState {
   humanPower: Power;
@@ -86,6 +87,21 @@ export default function GamePage() {
   const highlights = useMemo(() => (ix ? targets(ix, entry) : new Set<string>()), [ix, entry]);
 
   const [deadlineAt, setDeadlineAt] = useState<number | null>(null);
+  const paused = state?.clock?.paused ?? null;
+
+  /* A game plays on by itself, so it can be stopped. It also stops on its own
+     when nobody is looking at it, and starts again when you come back. */
+  const setPaused = async (next: boolean) => {
+    if (!gameId) return;
+    const r = await fetch(`${API}/api/games/${gameId}/pause`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: next }),
+    });
+    if (!r.ok) return;
+    const d = await r.json();
+    setState((old) => (old?.clock ? { ...old, clock: { ...old.clock, paused: d.paused } } : old));
+    setDeadlineAt(d.paused ? null : Date.now() + d.secondsLeft * 1000);
+  };
   const load = useCallback(async (id: string) => {
     const s: State = await fetch(`${API}/api/games/${id}/state`).then((r) => r.json());
     const [m, h] = await Promise.all([
@@ -94,7 +110,7 @@ export default function GamePage() {
     ]);
     phaseRef.current = s.phase;
     setState(s); setPress(m); setHistory(h); setEntry({ kind: "idle" });
-    setDeadlineAt(s.clock ? Date.now() + s.clock.secondsLeft * 1000 : null);
+    setDeadlineAt(s.clock && !s.clock.paused ? Date.now() + s.clock.secondsLeft * 1000 : null);
   }, []);
 
   /* At a timed table the other players act while you think. Poll press and the
@@ -119,7 +135,7 @@ export default function GamePage() {
           setView(null);
         } else {
           setState((old) => (old ? { ...old, clock: s.clock } : old));
-          setDeadlineAt(s.clock ? Date.now() + s.clock.secondsLeft * 1000 : null);
+          setDeadlineAt(s.clock && !s.clock.paused ? Date.now() + s.clock.secondsLeft * 1000 : null);
         }
       } catch { /* the next tick will try again */ }
     };
@@ -343,12 +359,24 @@ export default function GamePage() {
                 </span>
               </div>
               {arrow("forward")}
-              {secondsLeft !== null && !state?.done && (
-                <span title="time left in this phase"
-                      style={{ font: "600 13px 'IBM Plex Mono', monospace", minWidth: 40, textAlign: "right",
-                               color: secondsLeft <= 20 ? "#8f3328" : LABEL_INK, marginLeft: 6 }}>
-                  {clockText(secondsLeft)}
+              {agentGame && !state?.done && (
+                <span title={paused ? "the clock is stopped" : "time left in this phase"}
+                      style={{ font: "600 13px 'IBM Plex Mono', monospace", minWidth: 48, textAlign: "right",
+                               color: paused ? "#7a6c50" : (secondsLeft ?? 99) <= 20 ? "#8f3328" : LABEL_INK,
+                               marginLeft: 6 }}>
+                  {paused ? "paused" : clockText(secondsLeft ?? state?.clock?.secondsLeft ?? 0)}
                 </span>
+              )}
+              {agentGame && !state?.done && (
+                <button onClick={() => setPaused(!paused)}
+                        title={paused ? "let the other powers play on" : "stop the clock; the agents do nothing"}
+                        style={{ width: 26, height: 22, display: "grid", placeItems: "center", padding: 0,
+                                 border: `1.5px solid ${BORDER_INK}`, borderRadius: 2,
+                                 background: paused ? "#8a6414" : "transparent",
+                                 color: paused ? "#fdfaf2" : LABEL_INK, cursor: "pointer",
+                                 font: "600 9px 'IBM Plex Mono', monospace" }}>
+                  {paused ? "▶" : "❙❙"}
+                </button>
               )}
             </div>
           </div>
@@ -379,7 +407,10 @@ export default function GamePage() {
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 10, paddingTop: 6,
                       minHeight: 26 }}>
           <span style={{ font: "italic 15px 'EB Garamond', Georgia, serif", color: "#5f5540" }}>
-            {past ? `${pastTitle}${pastKind === "movement" ? "" : ` ${pastKind}`}, as it was played. Failed orders are marked.`
+            {paused ? (paused === "idle"
+                 ? "Paused: nobody was watching. The other powers wait until you play on."
+                 : "Paused. The other powers do nothing until you play on.")
+              : past ? `${pastTitle}${pastKind === "movement" ? "" : ` ${pastKind}`}, as it was played. Failed orders are marked.`
               : submitted ? (waitingOthers.length
                   ? `Orders in. Waiting for ${listNames(waitingOthers)}. You can still change them.`
                   : "Orders in. The phase closes shortly; you can still change them.")

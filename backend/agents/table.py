@@ -79,7 +79,7 @@ class Table:
                  resolve: Callable[[], Awaitable[None]], human: str | None = None,
                  phase_seconds: float = 120, min_open: float = 45.0, min_interval: float = 5.0,
                  idle_after: float = 20.0, final_call: float = 25.0, cost_cap_usd: float = 5.0,
-                 characters: bool = False):
+                 characters: bool = False, idle_pause: float = 60.0):
         self.game_id, self.f, self.seats, self.human = game_id, facade, seats, human
         self.resolve = resolve
         self.phase_seconds, self.min_interval = phase_seconds, min_interval
@@ -87,6 +87,10 @@ class Table:
         self.idle_after, self.final_call, self.cost_cap = idle_after, final_call, cost_cap_usd
         self.briefings = {p: briefing(p, phase_seconds / 60, characters, self.min_open) for p in seats}
         self.opened = 0.0
+        # A game plays on by itself, so it stops when nobody is watching it: the
+        # browser asking for the state is what counts as watching.
+        self.idle_pause = idle_pause
+        self.seen = time.monotonic()
         self.task: asyncio.Task | None = None
         self.phase_done = asyncio.Event()
         self.over_budget = False
@@ -97,6 +101,27 @@ class Table:
 
     def waiting_on(self) -> set[str]:
         return self.must_submit() - storage.submitted(self.game_id, self.f.phase)
+
+    def watching(self) -> None:
+        """The human asked for the state. Lifts an idle pause."""
+        self.seen = time.monotonic()
+        if self.human and storage.paused(self.game_id)[0] == "idle":
+            self.resume()
+
+    def unwatched(self) -> bool:
+        return bool(self.human) and time.monotonic() - self.seen > self.idle_pause
+
+    def pause(self, reason: str = "manual") -> None:
+        if storage.paused(self.game_id)[0] is None:
+            storage.pause(self.game_id, reason, self.seconds_left())
+
+    def resume(self) -> None:
+        left = storage.unpause(self.game_id)
+        storage.set_deadline(self.game_id, time.time() + (left if left is not None else self.phase_seconds))
+
+    @property
+    def is_paused(self) -> bool:
+        return storage.paused(self.game_id)[0] is not None
 
     def open_seconds(self) -> float:
         return time.monotonic() - self.opened
@@ -133,7 +158,20 @@ class Table:
         self.opened = time.monotonic()
         self.phase_done = asyncio.Event()
         agents = [asyncio.create_task(self._agent(p, phase)) for p in self.seats if p != self.human]
-        while self.seconds_left() > 0 and not self.closing_now():
+        paused_at = None
+        while True:
+            if self.is_paused:
+                paused_at = paused_at or time.monotonic()
+                await asyncio.sleep(0.2)
+                continue
+            if paused_at is not None:      # the window does not run down while paused
+                self.opened += time.monotonic() - paused_at
+                paused_at = None
+            if self.unwatched():
+                self.pause("idle")
+                continue
+            if self.seconds_left() <= 0 or self.closing_now():
+                break
             await asyncio.sleep(0.1)
         self.phase_done.set()
         for t in agents:
@@ -167,6 +205,9 @@ class Table:
             newest = max((m["id"] for m in inbox), default=0)
             final = left <= self.final_call and not warned
             due = first or newest > seen or feedback or final or now - last_call >= self.idle_after
+            if self.is_paused:
+                await asyncio.sleep(0.2)
+                continue
             if not due or now - last_call < self.min_interval or self.over_budget:
                 await asyncio.sleep(min(0.25, self.min_interval / 4))
                 continue

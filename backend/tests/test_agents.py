@@ -261,6 +261,54 @@ async def keeps_talking() -> None:
     ok("a promise made after submitting is on the sheet, because the sheet is the last one handed in")
 
 
+async def pausing() -> None:
+    """A game plays on by itself, so it must be stoppable -- by hand, and by walking away."""
+    calls = {"n": 0}
+    def fn(call: Call):
+        calls["n"] += 1
+        return {"messages": [{"to": "FRANCE" if call.power != "FRANCE" else "ITALY", "text": "hello"}]}
+
+    f, t, _ = new_table("t-pause", fn, human="FRANCE", phase_seconds=20, min_open=20,
+                        min_interval=0.05, idle_after=0.1, idle_pause=1e6)
+    run = asyncio.create_task(t.play_phase())
+    await wait_for(lambda: calls["n"] > 0)
+    t.pause()
+    await asyncio.sleep(0.3)
+    frozen, left = calls["n"], t.seconds_left()
+    await asyncio.sleep(0.6)
+    assert calls["n"] == frozen, f"{calls['n'] - frozen} calls happened while paused"
+    assert storage.paused("t-pause")[0] == "manual"
+    ok("paused: the agents stop calling and nothing is spent")
+
+    assert storage.paused("t-pause")[1] > 18, storage.paused("t-pause")
+    t.resume()
+    await asyncio.sleep(0.2)
+    assert 17 < t.seconds_left() <= 20, t.seconds_left()
+    await wait_for(lambda: calls["n"] > frozen)
+    ok("resumed: the phase keeps the time it had left, and the agents carry on")
+
+    t.pause()
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+    # nobody watching: it stops on its own
+    f, t, _ = new_table("t-idle", fn, human="FRANCE", phase_seconds=20, min_open=20,
+                        min_interval=0.05, idle_after=0.1, idle_pause=0.4)
+    run = asyncio.create_task(t.play_phase())
+    await wait_for(lambda: storage.paused("t-idle")[0] == "idle", timeout=5)
+    stopped = calls["n"]
+    await asyncio.sleep(0.5)
+    assert calls["n"] == stopped
+    ok("nobody watching for a while: the game pauses itself rather than playing on")
+
+    t.watching()
+    await wait_for(lambda: calls["n"] > stopped, timeout=5)
+    assert storage.paused("t-idle")[0] is None
+    ok("looking at the game again starts it up, without a button")
+    run.cancel()
+    await asyncio.gather(run, return_exceptions=True)
+
+
 async def slow_and_costly() -> None:
     class Hang:
         name = "hang"
@@ -279,7 +327,8 @@ async def slow_and_costly() -> None:
             return Completion("{}", cost_usd=0.40)
     f, t, _ = new_table("t-cap", Pricey(), cost_cap_usd=1.0, phase_seconds=1.0, idle_after=0.05)
     await t.play_phase()
-    assert storage.game_cost("t-cap") < 1.0 + 4 * 0.40
+    # the cap stops new calls; those already in flight (at most one per agent) still land
+    assert storage.game_cost("t-cap") <= 1.0 + 7 * 0.40, storage.game_cost("t-cap")
     assert any(c["error"] and "cost cap" in c["error"] for c in storage.calls_for("t-cap"))
     ok(f"the cost cap stops the calls and says so (${storage.game_cost('t-cap'):.2f} against $1.00)")
 
@@ -384,6 +433,7 @@ async def run():
     await pacing()
     await clock()
     await keeps_talking()
+    await pausing()
     await faults()
     await slow_and_costly()
     await human_game()

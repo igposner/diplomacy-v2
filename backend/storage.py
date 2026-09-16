@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS games (
     opponents    TEXT NOT NULL DEFAULT 'bots',   -- bots | agents
     model        TEXT,                           -- the agents' model, when agents
     deadline     REAL,                           -- unix time the current phase closes, agent games
+    paused       TEXT,                           -- NULL, 'manual' or 'idle' (nobody watching)
+    remaining    REAL,                           -- seconds left in the phase when it was paused
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
@@ -116,7 +118,9 @@ CREATE TABLE IF NOT EXISTS notes (           -- an agent's private notebook, car
 _ADDED = [("messages", "kind", "TEXT NOT NULL DEFAULT 'text'"),
           ("games", "opponents", "TEXT NOT NULL DEFAULT 'bots'"),
           ("games", "model", "TEXT"),
-          ("games", "deadline", "REAL")]
+          ("games", "deadline", "REAL"),
+          ("games", "paused", "TEXT"),
+          ("games", "remaining", "REAL")]
 
 _local = threading.local()
 
@@ -372,3 +376,25 @@ def set_deadline(game_id: str, deadline: float | None) -> None:
 def deadline(game_id: str) -> float | None:
     r = _conn().execute("SELECT deadline FROM games WHERE id=?", (game_id,)).fetchone()
     return r["deadline"] if r else None
+
+
+def pause(game_id: str, reason: str, remaining: float) -> None:
+    """Stop the clock where it stands. The phase keeps whatever time was left."""
+    c = _conn()
+    c.execute("UPDATE games SET paused=?, remaining=?, deadline=NULL WHERE id=?",
+              (reason, max(0.0, remaining), game_id))
+    c.commit()
+
+
+def unpause(game_id: str) -> float | None:
+    """Let it run again, and say how much time the phase had left."""
+    r = _conn().execute("SELECT remaining FROM games WHERE id=?", (game_id,)).fetchone()
+    c = _conn()
+    c.execute("UPDATE games SET paused=NULL WHERE id=?", (game_id,))
+    c.commit()
+    return r["remaining"] if r else None
+
+
+def paused(game_id: str) -> tuple[str | None, float | None]:
+    r = _conn().execute("SELECT paused, remaining FROM games WHERE id=?", (game_id,)).fetchone()
+    return (r["paused"], r["remaining"]) if r else (None, None)

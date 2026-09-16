@@ -48,6 +48,10 @@ class Orders(BaseModel):
     orders: list[str]
 
 
+class Pause(BaseModel):
+    paused: bool
+
+
 class Message(BaseModel):
     sender: str
     to: str
@@ -175,13 +179,27 @@ async def state(game_id: str, power: str | None = None):
     t = table(game_id)
     out["opponents"] = "agents" if t else "bots"
     if t:
+        t.watching()      # asking for the state is what keeps the game running
         done = storage.submitted(game_id, f.phase)
-        out["clock"] = {"secondsLeft": round(t.seconds_left(), 1),
+        why, left = storage.paused(game_id)
+        out["clock"] = {"secondsLeft": round(left if why else t.seconds_left(), 1),
+                        "paused": why,
                         "submitted": sorted(done & t.must_submit()),
                         "waitingOn": sorted(t.waiting_on()),
                         "youSubmitted": human in done}
         out["myOrders"] = f.game.get_orders(human) if human else []
     return out
+
+
+@app.post("/api/games/{game_id}/pause")
+async def pause(game_id: str, body: Pause):
+    """Stop or restart the clock. Paused, the agents do nothing and nothing is spent."""
+    t = table(game_id)
+    if not t:
+        raise HTTPException(409, "only a timed game has a clock to pause")
+    t.pause() if body.paused else t.resume()
+    why, left = storage.paused(game_id)
+    return {"paused": why, "secondsLeft": round((left if why else t.seconds_left()) or 0, 1)}
 
 
 @app.get("/api/games/{game_id}/history")
