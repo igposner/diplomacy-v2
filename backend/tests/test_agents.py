@@ -62,6 +62,8 @@ assert "GLOBAL" not in b and "no way to speak to the table at once" in flat
 assert "Do not send anyone the same message twice" in flat
 assert "a second message to the same player is refused within half a minute of the first" in flat
 assert "Do not tell anyone the deadline is upon you unless it says so" in flat
+assert "When someone writes to you, answer them" in flat
+assert "Having submitted your orders does not end the phase" in flat
 ok("the briefing covers the rules, the clock and its window, silence, revising and the sheet")
 
 f0 = Facade()
@@ -276,6 +278,26 @@ async def keeps_talking() -> None:
     ok("a promise made after submitting is on the sheet, because the sheet is the last one handed in")
 
 
+async def remembers() -> None:
+    """A promise broken two phases ago used to vanish: only the last phase was shown."""
+    f = Facade()
+    for _ in range(3):
+        for p in POWERS:
+            if f.legal_orders(p):
+                f.game.set_orders(p, await GreedyBot(p).decide_orders(f.game))
+        f.process()
+    f2, t, _ = new_table("t-memory", lambda c: {}, f=f, human="TURKEY")
+    earlier = t._earlier()
+    phases = [x["phase"] for x in earlier]
+    assert len(phases) >= 2 and "SPRING 1901 MOVEMENT" in phases, phases
+    prompt = t.prompt_for("RUSSIA", f.phase)
+    assert "WHAT WAS PLAYED BEFORE THAT" in prompt
+    spring = next(x for x in earlier if x["phase"] == "SPRING 1901 MOVEMENT")
+    an_order = next(o["order"] for o in spring["orders"] if o["ok"])
+    assert an_order in prompt, an_order
+    ok(f"orders from two phases back are still in sight ({an_order}, {len(phases)} phases carried)")
+
+
 async def pausing() -> None:
     """A game plays on by itself, so it must be stoppable -- by hand, and by walking away."""
     calls = {"n": 0}
@@ -373,6 +395,14 @@ async def nagging() -> None:
     prompts = [c["prompt"] for c in storage.calls_for("t-nag") if c["power"] == "ITALY"]
     assert any("STILL WAITING ON A REPLY FROM: TURKEY (2 messages unanswered)" in p for p in prompts)
     ok("its own turn prompt tells it who it is waiting on, so it can judge for itself")
+
+    # the other side of it: an agent that was written to and has not replied
+    turkey = [c["prompt"] for c in storage.calls_for("t-nag") if c["power"] == "TURKEY"]
+    assert any("WRITTEN TO YOU AND NOT ANSWERED: ITALY (wrote" in p for p in turkey), turkey[-1][:400]
+    assert t.owed("TURKEY", "SPRING 1901 MOVEMENT"), "Turkey owes Italy an answer"
+    storage.add_message("t-nag", "TURKEY", "ITALY", "Fine, let us talk about Austria.", "SPRING 1901 MOVEMENT")
+    assert not t.owed("TURKEY", "SPRING 1901 MOVEMENT"), "answering should clear the debt"
+    ok("a player who has been written to is told so, and the line clears once they answer")
 
     # a reply clears the count
     storage.add_message("t-nag", "TURKEY", "ITALY", "Fine. Talk after spring.", "SPRING 1901 MOVEMENT")
@@ -506,6 +536,7 @@ async def run():
     await clock()
     await keeps_talking()
     await nagging()
+    await remembers()
     await pausing()
     await faults()
     await slow_and_costly()

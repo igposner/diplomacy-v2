@@ -80,6 +80,11 @@ refused. Do not keep talking at someone who has not answered you: a second messa
 the same player is refused within half a minute of the first, and a third is refused
 until they reply. If you have nothing new to say to someone, say nothing to them.
 
+When someone writes to you, answer them. Leaving a player waiting is a choice like any
+other, and they will read it as one; make it deliberately, not by forgetting. Having
+submitted your orders does not end the phase: you can still be talked to, and you can
+still change what you submitted.
+
 The time left in the phase is at the top of every turn. Do not tell anyone the deadline
 is upon you unless it says so.
 
@@ -163,6 +168,18 @@ def _result(last: dict | None) -> str:
     return f"{last['phase']}\n" + "\n".join(rows)
 
 
+def _earlier(phases: list[dict] | None) -> str:
+    """Older phases, kept short: who moved where, without the outcomes. A promise
+    broken two phases ago otherwise vanishes from an agent's sight entirely."""
+    if not phases:
+        return "(nothing before that)"
+    out = []
+    for ph in phases:
+        moves = [o["order"] for o in ph.get("orders", []) if o.get("ok")]
+        out.append(f"{ph['phase']}: " + (", ".join(moves) if moves else "(nothing carried)"))
+    return "\n".join(out)
+
+
 def _clock(seconds: float) -> str:
     seconds = max(0, int(seconds))
     return f"{seconds // 60}:{seconds % 60:02d}"
@@ -171,7 +188,8 @@ def _clock(seconds: float) -> str:
 def turn_prompt(*, power: str, state: dict, legal: dict[str, list[str]], seconds_left: float,
                 submitted: set[str], waiting: set[str], press: list[dict], notes: list[dict],
                 last_result: dict | None, feedback: list[str], final_call: bool,
-                unanswered: list[str] | None = None) -> str:
+                unanswered: list[str] | None = None, owed: list[str] | None = None,
+                earlier: list[dict] | None = None) -> str:
     parts = [
         f"PHASE: {state['phase']}    TIME LEFT: {_clock(seconds_left)}",
         "SUBMITTED: " + (", ".join(sorted(submitted)) or "nobody yet")
@@ -183,6 +201,9 @@ def turn_prompt(*, power: str, state: dict, legal: dict[str, list[str]], seconds
         "WHAT HAPPENED LAST PHASE",
         _result(last_result),
         "",
+        "WHAT WAS PLAYED BEFORE THAT (orders that went through)",
+        _earlier(earlier),
+        "",
         "YOUR NOTES FROM EARLIER TURNS",
         "\n".join(f"[{n['phase']}] {n['text']}" for n in notes) or "(none)",
         "",
@@ -190,6 +211,7 @@ def turn_prompt(*, power: str, state: dict, legal: dict[str, list[str]], seconds
         _press(power, press),
         "",
         "STILL WAITING ON A REPLY FROM: " + (", ".join(unanswered) if unanswered else "(nobody)"),
+        "WRITTEN TO YOU AND NOT ANSWERED: " + (", ".join(owed) if owed else "(nobody)"),
         "",
         "YOUR LEGAL ORDERS THIS PHASE",
         "\n".join(f"{loc}: {' | '.join(opts)}" for loc, opts in legal.items()),

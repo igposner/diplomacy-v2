@@ -245,15 +245,20 @@ class Table:
             warned = warned or final
             feedback = await self._act(power, phase, left, feedback, final)
 
-    async def _act(self, power: str, phase: str, left: float, feedback: list[str], final: bool) -> list[str]:
+    def prompt_for(self, power: str, phase: str, left: float = 0.0,
+                   feedback: list[str] | None = None, final: bool = False) -> str:
         waiting = self.waiting_on()
-        call = Call(self.briefings[power], turn_prompt(
+        return turn_prompt(
             power=power, state=self.f.state(power), legal=self.f.legal_orders(power), seconds_left=left,
             submitted=self.must_submit() - waiting, waiting=waiting,
             press=self._visible_press(power), notes=storage.notes_for(self.game_id, power),
-            last_result=storage.last_result(self.game_id), feedback=feedback, final_call=final,
-            unanswered=self.unanswered(power, phase)),
-            "act", power, self.f.legal_orders(power), [p for p in POWERS if p != power])
+            last_result=storage.last_result(self.game_id), feedback=feedback or [], final_call=final,
+            unanswered=self.unanswered(power, phase), owed=self.owed(power, phase),
+            earlier=self._earlier())
+
+    async def _act(self, power: str, phase: str, left: float, feedback: list[str], final: bool) -> list[str]:
+        call = Call(self.briefings[power], self.prompt_for(power, phase, left, feedback, final),
+                    "act", power, self.f.legal_orders(power), [p for p in POWERS if p != power])
         model = self.seats[power]
 
         if storage.game_cost(self.game_id) >= self.cost_cap:
@@ -355,6 +360,24 @@ class Table:
                         f"give them at least {int(self.follow_up_gap)} seconds to reply")
         return None
 
+    def owed(self, power: str, phase: str) -> list[str]:
+        """Who has written to this power and had no answer back. Agents read a
+        message, submitted their orders, and said nothing; they need telling."""
+        mine = [m for m in storage.messages_for(self.game_id, power) if m["phase"] == phase]
+        out = []
+        for other in POWERS:
+            if other == power:
+                continue
+            theirs = [m for m in mine if m["sender"] == other]
+            if not theirs:
+                continue
+            answered = max((m["id"] for m in mine if m["sender"] == power and m["to"] == other), default=0)
+            waiting = [m for m in theirs if m["id"] > answered]
+            if waiting:
+                ago = int((_now() - _at(waiting[0]["at"])).total_seconds())
+                out.append(f"{other} (wrote {ago}s ago, you have not replied)")
+        return out
+
     def unanswered(self, power: str, phase: str) -> list[str]:
         """Who this power is waiting on, for its own turn prompt."""
         mine = [m for m in storage.messages_for(self.game_id, power) if m["phase"] == phase]
@@ -432,6 +455,11 @@ class Table:
                            {"orders": orders, "commitments": [asdict(c) for c in chart.commitments]}, True)
         self.submitted(power)
         return []
+
+    def _earlier(self, phases: int = 3) -> list[dict]:
+        """The phases before the last one, so a betrayal does not fall out of sight."""
+        played = self.f.history()
+        return played[-(phases + 1):-1] if len(played) > 1 else []
 
     def _visible_press(self, power: str) -> list[dict]:
         """This phase's press and the most recent earlier phase that had any."""
