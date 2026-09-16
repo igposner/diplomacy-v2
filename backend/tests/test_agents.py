@@ -8,7 +8,6 @@ import asyncio, json, os, re, sys, tempfile, time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["DIPLOMACY_DB"] = tempfile.mktemp(suffix=".sqlite3")
-os.environ.pop("DEEPSEEK_API_KEY", None)
 
 from fastapi import HTTPException
 
@@ -252,11 +251,16 @@ async def wait_for(cond, timeout=8.0):
 
 
 async def human_game() -> None:
+    # main loads backend/.env on import, so clear the key here rather than at import.
+    saved = os.environ.pop("DEEPSEEK_API_KEY", None)
     try:
         await main.new_game(main.NewGame(power="FRANCE", opponents="agents", model="deepseek-flash"))
         raise AssertionError("an agent game started without a key")
     except HTTPException as e:
         assert e.status_code == 400 and "DEEPSEEK_API_KEY" in e.detail
+    finally:
+        if saved is not None:
+            os.environ["DEEPSEEK_API_KEY"] = saved
     ok("asking for agents without a key is refused loudly, not quietly given bots")
 
     slow_germany = {"hold": True}
