@@ -66,6 +66,16 @@ def _same(text: str) -> str:
     return " ".join(str(text).split()).lower()
 
 
+def _now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
+
+
+def _at(stamp: str):
+    from datetime import datetime
+    return datetime.fromisoformat(stamp)
+
+
 def _alike(a: str, b: str) -> float:
     """How much two messages say the same thing. Models paraphrase themselves."""
     return difflib.SequenceMatcher(None, a, b).ratio()
@@ -89,9 +99,9 @@ class Table:
     def __init__(self, game_id: str, facade: Facade, seats: dict[str, Model], *,
                  resolve: Callable[[], Awaitable[None]], human: str | None = None,
                  phase_seconds: float = 120, min_open: float = 45.0, min_interval: float = 5.0,
-                 idle_after: float = 45.0, final_call: float = 25.0, cost_cap_usd: float = 5.0,
+                 idle_after: float = 45.0, final_call: float = 30.0, cost_cap_usd: float = 5.0,
                  characters: bool = False, idle_pause: float = 60.0,
-                 unanswered_cap: int = 2, alike_enough: float = 0.8):
+                 unanswered_cap: int = 2, alike_enough: float = 0.8, follow_up_gap: float = 30.0):
         self.game_id, self.f, self.seats, self.human = game_id, facade, seats, human
         self.resolve = resolve
         self.phase_seconds, self.min_interval = phase_seconds, min_interval
@@ -105,6 +115,7 @@ class Table:
         # Nobody may keep talking at a player who has not answered: agents wrote
         # the same offer six ways in a row to a human who never replied.
         self.unanswered_cap, self.alike_enough = unanswered_cap, alike_enough
+        self.follow_up_gap = follow_up_gap
         self.seen = time.monotonic()
         self.task: asyncio.Task | None = None
         self.phase_done = asyncio.Event()
@@ -337,6 +348,11 @@ class Table:
         if len(waiting) >= self.unanswered_cap:
             return (f"{to} has not answered your last {len(waiting)} messages this phase; "
                     "wait for a reply before writing to them again")
+        if waiting:
+            since = (_now() - _at(waiting[-1]["at"])).total_seconds()
+            if since < self.follow_up_gap:
+                return (f"you wrote to {to} {int(since)} seconds ago and they have not answered; "
+                        f"give them at least {int(self.follow_up_gap)} seconds to reply")
         return None
 
     def unanswered(self, power: str, phase: str) -> list[str]:

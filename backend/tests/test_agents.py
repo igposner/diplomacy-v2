@@ -60,7 +60,8 @@ assert set(re.findall(r'"kind": "(\w+)"', b)) == set(KINDS)
 assert "not shown to other players" in flat and "none of it is accepted" in flat
 assert "GLOBAL" not in b and "no way to speak to the table at once" in flat
 assert "Do not send anyone the same message twice" in flat
-assert "after two unanswered messages to a player in one phase, a third is refused" in flat
+assert "a second message to the same player is refused within half a minute of the first" in flat
+assert "Do not tell anyone the deadline is upon you unless it says so" in flat
 ok("the briefing covers the rules, the clock and its window, silence, revising and the sheet")
 
 f0 = Facade()
@@ -338,11 +339,18 @@ async def nagging() -> None:
         return {"messages": [{"to": "TURKEY", "text": lines[i]}]}
 
     # idle wake set to a third of the phase, as it is in a real game (45s of 120s)
-    f, t, _ = new_table("t-nag", fn, phase_seconds=3, min_open=2.9, min_interval=0.05, idle_after=1.0)
+    f, t, _ = new_table("t-nag", fn, phase_seconds=3, min_open=2.9, min_interval=0.05, idle_after=1.0,
+                        follow_up_gap=1.0)
     await t.play_phase()
     sent = [m for m in storage.messages_for("t-nag", "TURKEY") if m["sender"] == "ITALY"]
     assert len(sent) == 2, [m["text"][:40] for m in sent]
     ok(f"a player who never answers hears twice, not {turn['n']} times")
+
+    sent_at = [m["at"] for m in sent]
+    from datetime import datetime
+    gap = (datetime.fromisoformat(sent_at[1]) - datetime.fromisoformat(sent_at[0])).total_seconds()
+    assert gap >= 1.0, f"the second arrived {gap:.1f}s after the first"
+    ok(f"and the second waits for the gap rather than landing seconds later ({gap:.1f}s apart)")
 
     refusals = [a["error"] for a in storage.actions_for("t-nag", faulty_only=True)
                 if a["power"] == "ITALY" and a["kind"] == "message"]
@@ -355,11 +363,12 @@ async def nagging() -> None:
     first = "I will keep my fleet out of the Adriatic if you keep yours out of Trieste's waters this spring."
     assert t._message_error("FRANCE", "SPRING 1901 MOVEMENT", {"to": "ENGLAND", "text": first}) is None
     storage.add_message("t-nag", "FRANCE", "ENGLAND", first, "SPRING 1901 MOVEMENT")
+    storage.add_message("t-nag", "ENGLAND", "FRANCE", "Yes, agreed.", "SPRING 1901 MOVEMENT")   # they reply
     tweaked = t._message_error("FRANCE", "SPRING 1901 MOVEMENT",
                                {"to": "ENGLAND", "text": first.replace("I will", "I'll")})
     assert tweaked and "already said this" in tweaked, tweaked
     assert t._message_error("FRANCE", "SPRING 1901 MOVEMENT", {"to": "ENGLAND", "text": "Agreed."}) is None
-    ok("a near-copy is refused as a repeat, while a short note like \"Agreed.\" is not")
+    ok("a near-copy is refused even after they reply, while a short note like \"Agreed.\" is not")
 
     prompts = [c["prompt"] for c in storage.calls_for("t-nag") if c["power"] == "ITALY"]
     assert any("STILL WAITING ON A REPLY FROM: TURKEY (2 messages unanswered)" in p for p in prompts)

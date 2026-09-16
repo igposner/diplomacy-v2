@@ -59,9 +59,11 @@ pending orders and press intact, and the browser returns to the game you were in
 the query rather than the browser. There is no public channel: agents used it to
 broadcast pleasantries, and one public post woke all six of them, which was 60% of
 all the message traffic in a measured phase. Nobody may talk at a player who is not
-answering: two unanswered messages to the same power in a phase is the limit, a third
-is refused, and a reply opens the door again. Near-copies of something already sent are
-refused too.
+answering: a second message to the same power is refused within thirty seconds of the
+first, a third is refused until they reply, and a reply opens the door again at once.
+Near-copies of something already sent are refused too, and agents are told not to claim
+the deadline is upon them: one invented "just before the deadline" with 1:50 still on
+the clock.
 
 **An ending.** A solo at eighteen centres ends the game, with a victory or defeat
 screen in the winning power's colours and their 1901 flag.

@@ -76,9 +76,12 @@ nothing at all. You never have to say anything. Every message is private between
 the one player you address it to; there is no way to speak to the table at once.
 
 Do not send anyone the same message twice, in the same words or reworded: a repeat is
-refused. Do not keep talking at someone who has not answered you: after two unanswered
-messages to a player in one phase, a third is refused until they reply. Give people time
-to think; if you have nothing new to say to someone, say nothing to them.
+refused. Do not keep talking at someone who has not answered you: a second message to
+the same player is refused within half a minute of the first, and a third is refused
+until they reply. If you have nothing new to say to someone, say nothing to them.
+
+The time left in the phase is at the top of every turn. Do not tell anyone the deadline
+is upon you unless it says so.
 
 Submitting is not final. You may keep writing, and you may submit again to change your
 orders, until the phase closes; what stands at the close is what is played. If a
