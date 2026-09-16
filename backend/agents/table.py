@@ -60,6 +60,11 @@ class CostCap(RuntimeError):
 ECHOED = {"type"}
 
 
+def _same(text: str) -> str:
+    """Two messages are the same message if only spacing or case differs."""
+    return " ".join(str(text).split()).lower()
+
+
 def _json(text: str) -> tuple[dict, str | None]:
     """The object, and a note if the reply needed rescuing. Models sometimes send
     two objects in a row; the first one is the answer."""
@@ -273,7 +278,7 @@ class Table:
             feedback.append("messages must be a list of {\"to\", \"text\"} objects.")
             msgs = []
         for m in msgs:
-            err = self._message_error(power, m)
+            err = self._message_error(power, phase, m)
             storage.log_action(self.game_id, power, phase, "message", m, err is None, err)
             if err:
                 feedback.append(f"Message not sent: {err}.")
@@ -285,12 +290,13 @@ class Table:
             feedback += self._submit(power, phase, sub)
         return feedback
 
-    @staticmethod
-    def _message_error(power: str, m) -> str | None:
+    def _message_error(self, power: str, phase: str, m) -> str | None:
         if not isinstance(m, dict):
             return f"{m!r} is not a {{\"to\", \"text\"}} object"
         to, text = str(m.get("to", "")).upper(), m.get("text")
-        if to != "GLOBAL" and to not in POWERS:
+        if to == "GLOBAL":
+            return "there is no public channel; write to a power by name"
+        if to not in POWERS:
             return f"unknown recipient {m.get('to')!r}"
         if to == power:
             return "you cannot write to yourself"
@@ -298,6 +304,9 @@ class Table:
             return "the message has no text"
         if len(text) > 2000:
             return f"the message is {len(text)} characters; the limit is 2000"
+        if _same(text) in {_same(x["text"]) for x in storage.messages_for(self.game_id, power)
+                           if x["phase"] == phase and x["sender"] == power and x["to"] == to}:
+            return f"you have already sent this to {to} this phase; say something new or say nothing"
         return None
 
     def _submit(self, power: str, phase: str, sub) -> list[str]:

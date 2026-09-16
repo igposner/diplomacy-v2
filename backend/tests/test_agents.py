@@ -58,6 +58,8 @@ assert "Submitting is not final" in flat and "what stands at the close is what i
 assert "You never have to say anything" in flat and "do nothing at all" in flat
 assert set(re.findall(r'"kind": "(\w+)"', b)) == set(KINDS)
 assert "not shown to other players" in flat and "none of it is accepted" in flat
+assert "GLOBAL" not in b and "no way to speak to the table at once" in flat
+assert "Do not send anyone the same message twice" in flat
 ok("the briefing covers the rules, the clock and its window, silence, revising and the sheet")
 
 f0 = Facade()
@@ -159,7 +161,10 @@ async def faults() -> None:
             return [
                 "Happy to help! I'll move to Burgundy.",                                  # 1 unreadable
                 {"messages": [{"to": "MARS", "text": "hi"}, {"to": "GERMANY", "text": "me"},
-                              {"to": "FRANCE", "text": "  "}, {"to": "FRANCE", "text": "Burgundy is yours."}],
+                              {"to": "FRANCE", "text": "  "}, {"to": "GLOBAL", "text": "hello all"},
+                              {"to": "FRANCE", "text": "Burgundy is yours."},
+                              {"to": "FRANCE", "text": " burgundy IS  yours. "},
+                              {"to": "RUSSIA", "text": "Burgundy is yours."}],
                  "type": "json_object",                                                       # echoed, not a fault
                  "commitments": [{"to": "FRANCE", "kind": "no_enter", "province": "BUR"}]},  # 2 3 msg faults + unknown field
                 {"submit": {"orders": ["A MUN - PAR", "A BER - KIE", "F KIE H"],
@@ -181,13 +186,14 @@ async def faults() -> None:
     bad = [(a["kind"], a["error"]) for a in acts if a["power"] == "GERMANY" and not a["ok"]]
     kinds = [k for k, _ in bad]
     assert kinds.count("response") == 2, bad          # unreadable reply, unknown field
-    assert kinds.count("message") == 3, bad
+    assert kinds.count("message") == 5, bad   # unknown, self, empty, public, repeat
     assert kinds.count("order") == 2 and kinds.count("commitment") == 1, bad
     assert kinds.count("submission") == 2, bad
     ok(f"every faulty input is its own row with a reason: {len(bad)} from Germany "
        f"({', '.join(sorted(set(kinds)))})")
     reasons = " | ".join(e for _, e in bad)
     for needle in ["not a JSON object", "unknown recipient 'MARS'", "cannot write to yourself", "no text",
+                   "no public channel", "already sent this to FRANCE",
                    "unknown fields ignored: ['commitments']", "'A MUN - PAR' is not one of your legal orders",
                    "missing ['dest']", "second order for MUN"]:
         assert needle in reasons, needle
@@ -220,8 +226,11 @@ async def faults() -> None:
 
     fr = storage.messages_for("t-faults", "FRANCE")
     assert [m["text"] for m in fr if m["sender"] == "GERMANY"] == ["Burgundy is yours."]
+    ru = storage.messages_for("t-faults", "RUSSIA")
+    assert [m["text"] for m in ru if m["sender"] == "GERMANY"] == ["Burgundy is yours."]
     assert not any("Trieste" in p for p in prompts["FRANCE"] + prompts["GERMANY"])
     ok("the valid message is delivered, the faulty ones are not, and private press stays private")
+    ok("the same words repeated to France are refused, but the same words to Russia go through")
     assert not any(m["kind"] == "commitment" for m in fr)
     assert next(c for c in storage.charts_in_phase("t-faults", "SPRING 1901 MOVEMENT")
                 if c["power"] == "GERMANY")["commitments"][0]["province"] == "BUR"

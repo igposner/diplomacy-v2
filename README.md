@@ -55,8 +55,10 @@ centres minus units.
 **Persistence.** SQLite behind the facade. A game survives a restart with its
 pending orders and press intact, and the browser returns to the game you were in.
 
-**Press.** Messages to any power or to everyone, with visibility enforced in the
-query rather than the browser.
+**Press.** Every message is private between two powers, with visibility enforced in
+the query rather than the browser. There is no public channel: agents used it to
+broadcast pleasantries, and one public post woke all six of them, which was 60% of
+all the message traffic in a measured phase.
 
 **An ending.** A solo at eighteen centres ends the game, with a victory or defeat
 screen in the winning power's colours and their 1901 flag.

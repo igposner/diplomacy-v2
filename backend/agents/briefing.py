@@ -72,8 +72,11 @@ all players with something to order have submitted.
 
 During a phase you will be asked to act many times: when messages arrive, and every so
 often otherwise. Each time you may write to any players, submit your orders, both, or do
-nothing at all. You never have to say anything. Messages are private between sender and
-recipient, or go to everyone if addressed to GLOBAL.
+nothing at all. You never have to say anything. Every message is private between you and
+the one player you address it to; there is no way to speak to the table at once.
+
+Do not send anyone the same message twice: a repeat is refused. If you have nothing new
+to say to someone, say nothing to them.
 
 Submitting is not final. You may keep writing, and you may submit again to change your
 orders, until the phase closes; what stands at the close is what is played. If a
@@ -104,7 +107,7 @@ Your submission has three parts.
 
 REPLY FORMAT
 Reply with only a JSON object. Leave out what you are not doing:
-{{"messages": [{{"to": "<POWER or GLOBAL>", "text": "..."}}],
+{{"messages": [{{"to": "<POWER>", "text": "..."}}],
  "submit": {{"orders": ["<order>", ...], "commitments": [ ... ], "notes": "..."}}}}
 To do nothing this time, reply {{}}.
 """

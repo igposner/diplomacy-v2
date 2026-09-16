@@ -54,7 +54,10 @@ export default function OrdersPanel({
   const verb = adjust ? (adjust.builds ? "placed" : "chosen") : "ordered";
   const capped = adjust ? adjust.builds - adjust.placeable : 0;
   return (
-    <section style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: "1 1 auto" }}>
+    /* Fixed height, so a long build list scrolls inside the panel rather than
+       squeezing the press below it. */
+    <section style={{ display: "flex", flexDirection: "column", minHeight: 0,
+                      flex: "0 0 auto", maxHeight: "46%" }}>
       <header style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "0 0 8px" }}>
         <h2 style={{ margin: 0, font: "italic 600 19px 'EB Garamond', Georgia, serif", color: LABEL_INK }}>
           Orders

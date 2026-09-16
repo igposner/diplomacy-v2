@@ -13,15 +13,13 @@ export default function PressPanel({
 }: { me: Power; messages: Press[]; onSend: (to: string, text: string) => Promise<void>;
      agents?: boolean }) {
   const others = POWERS.filter((p) => p !== me);
-  const [channel, setChannel] = useState<string>("GLOBAL");
+  const [channel, setChannel] = useState<string>(others[0]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
 
   const shown = useMemo(
     () => messages.filter((m) =>
-      channel === "GLOBAL"
-        ? m.to === "GLOBAL"
-        : (m.sender === channel && m.to === me) || (m.sender === me && m.to === channel)),
+      (m.sender === channel && m.to === me) || (m.sender === me && m.to === channel)),
     [messages, channel, me]
   );
 
@@ -34,8 +32,7 @@ export default function PressPanel({
 
   const chip = (id: string, label: string, colour?: string) => {
     const on = channel === id;
-    const unread = messages.filter((m) =>
-      id === "GLOBAL" ? m.to === "GLOBAL" : m.sender === id && m.to === me).length;
+    const unread = messages.filter((m) => m.sender === id && m.to === me).length;
     return (
       <button key={id} onClick={() => setChannel(id)}
               style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 7px",
@@ -62,13 +59,12 @@ export default function PressPanel({
         </h2>
         <span style={{ font: "500 9px 'IBM Plex Mono', monospace", letterSpacing: 1.2,
                        textTransform: "uppercase", color: "#7a6c50" }}>
-          private to you and the recipient
+          every message is private to one power
         </span>
 
       </header>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, paddingBottom: 8 }}>
-        {chip("GLOBAL", "All")}
         {others.map((p) => chip(p, p.slice(0, 3), FILL[p]))}
       </div>
 
@@ -126,7 +122,7 @@ export default function PressPanel({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder={channel === "GLOBAL" ? "Write to every power…" : `Write to ${channel.toLowerCase()}…`}
+          placeholder={`Write to ${channel.toLowerCase()}…`}
           rows={2}
           style={{ flex: 1, minWidth: 0, resize: "none", font: "15px 'EB Garamond', Georgia, serif",
                    color: LABEL_INK, background: "#fdfaf2", border: `1px solid ${PARCHMENT_DARK}`,

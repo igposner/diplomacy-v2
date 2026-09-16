@@ -305,7 +305,9 @@ async def send_message(game_id: str, body: Message):
     sender, to = body.sender.upper(), body.to.upper()
     if sender not in POWERS:
         raise HTTPException(400, f"invalid sender {body.sender!r}")
-    if to != "GLOBAL" and to not in POWERS:
+    if to == "GLOBAL":
+        raise HTTPException(400, "there is no public channel; write to a power by name")
+    if to not in POWERS:
         raise HTTPException(400, f"invalid recipient {body.to!r}")
     text = body.text.strip()
     if not text:
