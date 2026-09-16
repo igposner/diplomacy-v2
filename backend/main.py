@@ -2,6 +2,7 @@
 and nothing lives only in memory -- see storage.py."""
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Literal
 
@@ -113,6 +114,18 @@ def _seat(game_id: str, f: Facade, model, human: str) -> Table:
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "live": len(LIVE), "stored": len(storage.list_games(1000))}
+
+
+@app.get("/api/models")
+async def models():
+    """What the lobby may offer for the other six seats, and why not, when not."""
+    ready = bool(os.environ.get("DEEPSEEK_API_KEY"))
+    return {"models": [
+        {"id": "deepseek-flash", "label": "DeepSeek Flash", "ready": ready,
+         "note": "about $1 a game" if ready else "add DEEPSEEK_API_KEY to backend/.env"},
+        {"id": "deepseek-v4-pro", "label": "DeepSeek v4 Pro", "ready": ready,
+         "note": "stronger, about $5 a game" if ready else "add DEEPSEEK_API_KEY to backend/.env"},
+    ]}
 
 
 @app.get("/api/games")

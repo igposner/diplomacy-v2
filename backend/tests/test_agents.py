@@ -306,6 +306,15 @@ async def human_game() -> None:
             os.environ["DEEPSEEK_API_KEY"] = saved
     ok("asking for agents without a key is refused loudly, not quietly given bots")
 
+    saved = os.environ.pop("DEEPSEEK_API_KEY", None)
+    assert all(not m["ready"] and "DEEPSEEK_API_KEY" in m["note"] for m in (await main.models())["models"])
+    os.environ["DEEPSEEK_API_KEY"] = saved or "test"
+    listed = (await main.models())["models"]
+    assert [m["id"] for m in listed] == ["deepseek-flash", "deepseek-v4-pro"] and all(m["ready"] for m in listed)
+    if saved is None:
+        os.environ.pop("DEEPSEEK_API_KEY")
+    ok("the lobby is told which models it may offer, and what is missing when it may not")
+
     slow_germany = {"hold": True}
     def fn(call: Call):
         if call.power == "GERMANY" and slow_germany["hold"]:

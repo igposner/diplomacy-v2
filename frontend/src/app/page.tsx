@@ -8,6 +8,8 @@ import { BORDER_INK, LABEL_INK, PARCHMENT, PARCHMENT_DARK, TOKEN, type Power } f
 import { CHARACTER, POWERS, homes } from "@/lib/powers";
 
 const API = process.env.NEXT_PUBLIC_API ?? "http://localhost:8000";
+
+interface ModelOption { id: string; label: string; ready: boolean; note: string }
 const INK = "#3b3428";
 
 /* Rhumb lines: the radiating web on a portolan chart, struck from points on a
@@ -48,6 +50,16 @@ export default function Lobby() {
   const [busy, setBusy] = useState(false);
   const [resume, setResume] = useState<{ id: string; phase: string; power: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [table, setTable] = useState<"bots" | "agents">("bots");
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState("deepseek-flash");
+  useEffect(() => {
+    fetch(`${API}/api/models`).then((r) => r.json())
+      .then((d) => setModels(d.models ?? []))
+      .catch(() => setModels([]));   // the lobby still deals a scripted game
+  }, []);
+  const chosen = models.find((m) => m.id === model);
+  const agentsReady = models.some((m) => m.ready);
 
   useEffect(() => {
     (async () => {
@@ -87,9 +99,12 @@ export default function Lobby() {
     try {
       const r = await fetch(`${API}/api/games`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ power: pick, advance: 0 }),
+        body: JSON.stringify({ power: pick, advance: 0, opponents: table, model }),
       });
-      if (!r.ok) throw new Error(`could not begin (${r.status})`);
+      if (!r.ok) {
+        const d = await r.json().catch(() => null);
+        throw new Error(typeof d?.detail === "string" ? d.detail : `could not begin (${r.status})`);
+      }
       const { game_id } = await r.json();
       try { localStorage.setItem("diplomacy.game", game_id); } catch { /* ignore */ }
       router.push(`/game/${game_id}`);
@@ -183,9 +198,50 @@ export default function Lobby() {
                   <dd style={{ margin: 0, font: "500 13px var(--font-mono), monospace",
                                letterSpacing: 1, color: LABEL_INK }}>{homes(pick).join("  ")}</dd>
                   <dt style={{ font: "400 11px var(--font-chart), Georgia, serif",
-                               letterSpacing: "0.2em", color: "#7a6c50", alignSelf: "center" }}>TABLE</dt>
+                               letterSpacing: "0.2em", color: "#7a6c50", alignSelf: "start",
+                               paddingTop: 7 }}>TABLE</dt>
                   <dd style={{ margin: 0, color: "#4a4231" }}>
-                    Six scripted opponents. Agents once the model seats are wired up.
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {(["bots", "agents"] as const).map((kind) => {
+                        const on = table === kind;
+                        const off = kind === "agents" && models.length > 0 && !agentsReady;
+                        return (
+                          <button key={kind} onClick={() => !off && setTable(kind)} disabled={off}
+                                  style={{ font: "400 11px var(--font-chart), Georgia, serif",
+                                           letterSpacing: "0.16em", textTransform: "uppercase",
+                                           padding: "5px 11px", color: INK,
+                                           border: `1.5px solid ${on ? BORDER_INK : PARCHMENT_DARK}`,
+                                           background: on ? "rgba(255,250,235,.7)" : "transparent",
+                                           cursor: off ? "not-allowed" : "pointer",
+                                           opacity: off ? 0.45 : 1 }}>
+                            {kind === "bots" ? "Scripted" : "Agents"}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p style={{ margin: "8px 0 0", font: "italic 14px/1.5 var(--font-serif), Georgia, serif",
+                                color: "#6b6049" }}>
+                      {table === "bots"
+                        ? "Six scripted opponents. They play plausibly and never answer press."
+                          + (models.length && !agentsReady ? ` Agents are unavailable: ${models[0].note}.` : "")
+                        : agentsReady
+                          ? "Six agents who read your press, answer it, and keep or break their word."
+                          : (models[0]?.note ?? "Agents need a model key in backend/.env.")}
+                    </p>
+                    {table === "agents" && agentsReady && (
+                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {models.filter((m) => m.ready).map((m) => (
+                          <button key={m.id} onClick={() => setModel(m.id)}
+                                  style={{ font: "400 11px var(--font-chart), Georgia, serif",
+                                           letterSpacing: "0.14em", padding: "4px 10px", color: INK,
+                                           border: `1.5px solid ${model === m.id ? BORDER_INK : PARCHMENT_DARK}`,
+                                           background: model === m.id ? "rgba(255,250,235,.7)" : "transparent",
+                                           cursor: "pointer" }}>
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </dd>
                 </dl>
               </div>
@@ -216,7 +272,10 @@ export default function Lobby() {
                 </span>
                 <span style={{ display: "block", font: "italic 14px var(--font-serif), Georgia, serif",
                                color: "#7a6c50", marginTop: 2 }}>
-                  {pick ? `Spring 1901 · you hold ${title}` : "choose a power first"}
+                  {!pick ? "choose a power first"
+                    : table === "agents"
+                      ? `Spring 1901 · you hold ${title} · ${chosen?.label ?? model}${chosen?.note ? `, ${chosen.note}` : ""}`
+                      : `Spring 1901 · you hold ${title} · scripted table`}
                 </span>
               </span>
             </button>

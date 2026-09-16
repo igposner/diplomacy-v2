@@ -90,15 +90,18 @@ per-game cost cap. There is no bot fallback.
 step back through every played turn. Each past turn shows the board as it stood, the
 orders everyone gave, and which ones failed. The live board says "Present".
 
+**A lobby that deals either table.** Pick a power from the compass, then choose
+scripted opponents or six agents, and which model they use. Agents need
+`DEEPSEEK_API_KEY` in `backend/.env`; without it the option is disabled and says so.
+
 ## What does not work yet
 
-- **No real model has played.** The DeepSeek adapter is written but untested
-  until a key goes in `backend/.env` as `DEEPSEEK_API_KEY=...`. Everything else
-  runs against `dummy`, an offline stand-in that gives random legal orders and
-  canned lines. It is not an agent.
-- **The lobby cannot start an agent game.** Until it can:
-  `curl -XPOST localhost:8000/api/games -H 'content-type: application/json' -d '{"power":"FRANCE","opponents":"agents","model":"deepseek-flash"}'`
-  then open `/game/<id>`.
+- **No full game has been played by real models yet.** Single live phases work
+  (61 calls, 32 promises, two of them broken, 45 seconds, $0.03); a whole game
+  has only been played by the offline stand-in.
+- **An agent game plays on without you.** Once a game is open the clock keeps
+  running phase after phase, so leaving one running spends money until it ends or
+  hits its $5 cap (a full game is about $1).
 - **The commitment sheet is self-reported.** An agent that leaves off the promises it
   means to break looks more honest than it is. The full message text is stored so this
   can be audited, but no audit exists yet. Only the last word is scored against the
