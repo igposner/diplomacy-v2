@@ -63,7 +63,11 @@ answering: a second message to the same power is refused within thirty seconds o
 first, a third is refused until they reply, and a reply opens the door again at once.
 Near-copies of something already sent are refused too, and agents are told not to claim
 the deadline is upon them: one invented "just before the deadline" with 1:50 still on
-the clock.
+the clock. Each agent is told who it is waiting on and who it has left waiting, because
+they were reading messages, submitting orders and saying nothing back; replies within
+the same phase went from 58% to 84%. They also see the orders played in the last three
+phases rather than only the last: a promise broken two phases ago used to fall out of
+sight entirely.
 
 **An ending.** A solo at eighteen centres ends the game, with a victory or defeat
 screen in the winning power's colours and their 1901 flag.
