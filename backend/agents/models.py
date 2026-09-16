@@ -68,13 +68,27 @@ class MissingKey(RuntimeError):
     pass
 
 
+class BadReply(RuntimeError):
+    """The provider returned nothing usable. Not the model's fault as a player."""
+
+
 class DeepSeek:
     url = "https://api.deepseek.com/chat/completions"
 
-    def __init__(self, model: str = "deepseek-flash", key: str | None = None, timeout: float = 120):
+    def __init__(self, model: str = "deepseek-flash", key: str | None = None, timeout: float = 120,
+                 thinking: bool = False, max_tokens: int | None = None):
+        """DeepSeek models think before answering unless told not to, and the
+        thinking is billed and capped as output. Measured on a real turn prompt:
+        thinking on, it spent the whole 4000-token budget reasoning and returned
+        an empty reply; it needed ~6500 tokens and 43s to answer at all. Thinking
+        off, the same prompt answered in ~400 tokens and 1.5s, and the answers
+        were sound. So it is off by default, and available for comparison."""
         if model not in DEEPSEEK_PRICES:
             raise ValueError(f"unknown DeepSeek model {model!r}")
-        self.name = model
+        self.name = model if not thinking else f"{model}:thinking"
+        self.model, self.thinking = model, thinking
+        # Thinking is billed and capped as output, so it needs a far bigger budget.
+        self.max_tokens = max_tokens or (8000 if thinking else 4000)
         self.key = key or os.environ.get("DEEPSEEK_API_KEY")
         if not self.key:
             raise MissingKey("DEEPSEEK_API_KEY is not set; put it in backend/.env")
@@ -83,11 +97,12 @@ class DeepSeek:
     async def complete(self, call: Call) -> Completion:
         t0 = time.monotonic()
         r = await self.client.post(self.url, headers={"Authorization": f"Bearer {self.key}"}, json={
-            "model": self.name,
+            "model": self.model,
             "messages": [{"role": "system", "content": call.system},
                          {"role": "user", "content": call.prompt}],
             "response_format": {"type": "json_object"},
-            "max_tokens": 4000,
+            "max_tokens": self.max_tokens,
+            "thinking": {"type": "enabled" if self.thinking else "disabled"},
         })
         if r.status_code != 200:
             raise RuntimeError(f"DeepSeek HTTP {r.status_code}: {r.text[:300]}")
@@ -96,9 +111,16 @@ class DeepSeek:
         hit = u.get("prompt_cache_hit_tokens", 0)
         miss = u.get("prompt_cache_miss_tokens", u.get("prompt_tokens", 0) - hit)
         out = u.get("completion_tokens", 0)
-        p_hit, p_miss, p_out = DEEPSEEK_PRICES[self.name]["peak" if deepseek_peak() else "offpeak"]
+        p_hit, p_miss, p_out = DEEPSEEK_PRICES[self.model]["peak" if deepseek_peak() else "offpeak"]
+        choice = body["choices"][0]
+        text = choice["message"].get("content") or ""
+        if not text.strip():
+            # Nothing came back: the budget went on thinking, or the provider
+            # simply returned empty. Either way the agent never got to answer.
+            raise BadReply(f"empty reply (finish_reason={choice.get('finish_reason')}, "
+                           f"{u.get('completion_tokens', 0)} output tokens)")
         return Completion(
-            text=body["choices"][0]["message"]["content"] or "",
+            text=text,
             input_tokens=hit + miss, cached_tokens=hit, output_tokens=out,
             cost_usd=(hit * p_hit + miss * p_miss + out * p_out) / 1e6,
             latency_ms=int((time.monotonic() - t0) * 1000))
@@ -141,8 +163,12 @@ class Dummy:
 
 
 def make_model(name: str) -> Model:
-    if name in DEEPSEEK_PRICES:
-        return DeepSeek(name)
+    """"deepseek-flash" answers straight away; "deepseek-flash:thinking" reasons first."""
+    base, _, mode = name.partition(":")
+    if base in DEEPSEEK_PRICES:
+        if mode not in ("", "thinking"):
+            raise ValueError(f"unknown mode {mode!r}; use '{base}' or '{base}:thinking'")
+        return DeepSeek(base, thinking=mode == "thinking")
     if name == "dummy":
         return Dummy()
     raise ValueError(f"unknown model {name!r}")

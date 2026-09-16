@@ -15,6 +15,8 @@ echo "--- promise-keeping: the six scoring rules and the chart ---"
 ./venv/bin/python tests/test_commitments.py | grep passed
 echo "--- promise-keeping: recorded through the real resolve path ---"
 ./venv/bin/python tests/test_research_record.py | tail -1
+echo "--- model adapter (fake transport, no key) ---"
+DEEPSEEK_API_KEY=test ./venv/bin/python tests/test_models.py | tail -1
 echo "--- agent table: clock, pacing, faulty inputs, human game (scripted models) ---"
 ./venv/bin/python tests/test_agents.py | tail -1
 echo "--- a whole headless game on a fast clock, seven offline agents ---"
