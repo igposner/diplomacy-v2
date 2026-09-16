@@ -66,19 +66,20 @@ disband the difference.
 TURN = """\
 HOW PLAY WORKS
 You are one of seven players at an online table. Every phase, including retreats and
-winter builds and removals, lasts at most {minutes} minutes. It ends early the moment all
-players with something to order have submitted.
+winter builds and removals, lasts at most {minutes} minutes. It stays open for at least the
+first {window} of that, so that messages can be answered, and after that it ends as soon as
+all players with something to order have submitted.
 
 During a phase you will be asked to act many times: when messages arrive, and every so
 often otherwise. Each time you may write to any players, submit your orders, both, or do
 nothing at all. You never have to say anything. Messages are private between sender and
 recipient, or go to everyone if addressed to GLOBAL.
 
-Submitting is final: once your orders are in, your part in this phase is over. If a
+Submitting is not final. You may keep writing, and you may submit again to change your
+orders, until the phase closes; what stands at the close is what is played. If a
 submission has a mistake in it, none of it is accepted and you are told what was wrong,
-so you can correct it and submit again before the deadline. If the deadline passes before
-you submit, your units hold, and in winter the rules choose your removals and you lose
-your builds.
+so you can correct it and submit again. If the phase closes before you submit anything,
+your units hold, and in winter the rules choose your removals and you lose your builds.
 
 WHEN YOU SUBMIT
 Your submission has three parts.
@@ -109,13 +110,19 @@ To do nothing this time, reply {{}}.
 """
 
 
-def briefing(power: str, minutes: float = 2, character: bool = False) -> str:
+def _span(seconds: float) -> str:
+    if seconds >= 90:
+        return f"{seconds / 60:g} minutes"
+    return f"{seconds:g} seconds"
+
+
+def briefing(power: str, minutes: float = 2, character: bool = False, min_open: float = 45) -> str:
     return "\n".join([
         f"You are playing the board game Diplomacy as {power.title()}, against six other players.",
         "",
         *(["YOUR CHARACTER", PERSONAS[power], ""] if character else []),
         RULES,
-        TURN.format(minutes=f"{minutes:g}"),
+        TURN.format(minutes=f"{minutes:g}", window=_span(min_open)),
     ])
 
 

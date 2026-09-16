@@ -138,9 +138,10 @@ export default function GamePage() {
 
   /* Orders you have entered but not submitted are saved as you go, so the clock
      running out plays them rather than holding everything. */
-  const locked = !!state?.clock?.youSubmitted;
+  // Handed in, but not locked: orders may be changed until the phase closes.
+  const submitted = !!state?.clock?.youSubmitted;
   useEffect(() => {
-    if (!gameId || !agentGame || locked || !me) return;
+    if (!gameId || !agentGame || !me) return;
     const t = setTimeout(() => {
       fetch(`${API}/api/games/${gameId}/orders`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -149,7 +150,7 @@ export default function GamePage() {
     }, 400);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, gameId, agentGame, locked]);
+  }, [draft, gameId, agentGame]);
 
   // Left and right arrows step through the turns, unless you are typing.
   useEffect(() => {
@@ -186,7 +187,7 @@ export default function GamePage() {
   /* Press on a unit selects it, so releasing over another province is a drag-move.
      A separate click on an already-selected unit is what orders a hold. */
   const onProvince = (p: string, phase: "down" | "up") => {
-    if (!ix || view !== null || locked) return;
+    if (!ix || view !== null) return;
     if (review) setReview(false);   // you are playing now, not reviewing
     if (phase === "down") {
       consumed.current = false;
@@ -365,8 +366,8 @@ export default function GamePage() {
                      orders={past.orders} results={past.orders} onProvince={() => {}} />
             )}
             {state && !past && (
-              <Board state={state} me={seat} ix={locked ? null : ix} entry={entry}
-                     highlights={locked ? new Set() : highlights}
+              <Board state={state} me={seat} ix={ix} entry={entry}
+                     highlights={highlights}
                      orders={Object.values(draft)}
                      results={review ? state.lastResult?.orders ?? null : null}
                      onProvince={onProvince} />
@@ -379,7 +380,9 @@ export default function GamePage() {
                       minHeight: 26 }}>
           <span style={{ font: "italic 15px 'EB Garamond', Georgia, serif", color: "#5f5540" }}>
             {past ? `${pastTitle}${pastKind === "movement" ? "" : ` ${pastKind}`}, as it was played. Failed orders are marked.`
-              : locked ? (waitingOthers.length ? `Orders in. Waiting for ${listNames(waitingOthers)}.` : "Orders in. The turn is resolving…")
+              : submitted ? (waitingOthers.length
+                  ? `Orders in. Waiting for ${listNames(waitingOthers)}. You can still change them.`
+                  : "Orders in. The phase closes shortly; you can still change them.")
               : ix ? hint(ix, entry) : "Loading…"}
           </span>
           {past && (
@@ -391,7 +394,7 @@ export default function GamePage() {
               Back to present
             </button>
           )}
-          {ix && !past && !locked && modes(ix, entry).filter((m) => m.next || m.order).map((m) => (
+          {ix && !past && modes(ix, entry).filter((m) => m.next || m.order).map((m) => (
             <button key={m.label} title={m.hint}
                     onClick={() => {
                       if (m.order) { record(m.order); setEntry({ kind: "idle" }); }
@@ -404,7 +407,7 @@ export default function GamePage() {
               {m.label}
             </button>
           ))}
-          {ix && !past && !locked && chips(ix, entry).map((o) => (
+          {ix && !past && chips(ix, entry).map((o) => (
             <button key={o.order}
                     onClick={() => { record(o.order); setEntry({ kind: "idle" }); }}
                     style={{ font: "600 10px 'EB Garamond', serif", letterSpacing: 1.2,
@@ -448,7 +451,7 @@ export default function GamePage() {
                      onClear={(loc) => setDraft((d) => { const n = { ...d }; delete n[loc]; return n; })}
                      onClearAll={() => setDraft({})}
                      phaseType={state?.phaseType ?? ""} adjust={adjust}
-                     onSubmit={submit} busy={busy} note={note} locked={locked} />
+                     onSubmit={submit} busy={busy} note={note} submitted={submitted} />
 
         <div style={{ height: 1, background: PARCHMENT_DARK, flex: "none" }} />
 

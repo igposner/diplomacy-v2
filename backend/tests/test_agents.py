@@ -25,7 +25,7 @@ n = 0
 def ok(label):
     global n; n += 1; print("  ok", label)
 
-FAST = dict(phase_seconds=2.0, min_interval=0.05, idle_after=0.4, final_call=0.5)
+FAST = dict(phase_seconds=2.0, min_open=0.3, min_interval=0.05, idle_after=0.4, final_call=0.5)
 
 
 def holds(call: Call) -> list[str]:
@@ -52,11 +52,13 @@ def new_table(gid: str, fn, f: Facade | None = None, human=None, **kw):
 b = briefing("GERMANY")
 flat = " ".join(b.split())
 assert "as Germany, against six other players" in b and "18 or more" in b and "1920" in b
-assert "at most 2 minutes" in flat and "ends early the moment all" in flat and "retreats and" in flat
+assert "at most 2 minutes" in flat and "stays open for at least the first 45 seconds" in flat
+assert "ends as soon as all players with something to order have submitted" in flat and "retreats and" in flat
+assert "Submitting is not final" in flat and "what stands at the close is what is played" in flat
 assert "You never have to say anything" in flat and "do nothing at all" in flat
 assert set(re.findall(r'"kind": "(\w+)"', b)) == set(KINDS)
 assert "not shown to other players" in flat and "none of it is accepted" in flat
-ok("the briefing covers the rules, the two-minute clock, silence, submitting and the sheet")
+ok("the briefing covers the rules, the clock and its window, silence, revising and the sheet")
 
 f0 = Facade()
 tp = turn_prompt(power="GERMANY", state=f0.state("GERMANY"), legal=f0.legal_orders("GERMANY"),
@@ -109,11 +111,12 @@ async def pacing() -> None:
 
 # ============================================================================ when a phase ends
 async def clock() -> None:
-    f, t, resolved = new_table("t-early", submit_holds, phase_seconds=10)
+    f, t, resolved = new_table("t-early", submit_holds, phase_seconds=10, min_open=1.0)
     t0 = time.monotonic()
     await t.play_phase()
-    assert resolved and resolved[0][1] - t0 < 2.0 and f.phase == "FALL 1901 MOVEMENT"
-    ok(f"the phase ends the moment everyone has submitted ({resolved[0][1] - t0:.2f}s of a 10s clock)")
+    took = resolved[0][1] - t0
+    assert resolved and 1.0 <= took < 3.0 and f.phase == "FALL 1901 MOVEMENT", took
+    ok(f"everyone submits at once, but the phase still stays open for its window ({took:.2f}s of a 1s window, 10s clock)")
 
     def stubborn(call):
         return {} if call.power == "TURKEY" else submit_holds(call)
@@ -151,10 +154,13 @@ async def faults() -> None:
         prompts.setdefault(p, []).append(call.prompt)
         k = turn[p]
         if p == "GERMANY":
+            if k > 5:
+                return {}                      # its orders are in; nothing more to say
             return [
                 "Happy to help! I'll move to Burgundy.",                                  # 1 unreadable
                 {"messages": [{"to": "MARS", "text": "hi"}, {"to": "GERMANY", "text": "me"},
                               {"to": "FRANCE", "text": "  "}, {"to": "FRANCE", "text": "Burgundy is yours."}],
+                 "type": "json_object",                                                       # echoed, not a fault
                  "commitments": [{"to": "FRANCE", "kind": "no_enter", "province": "BUR"}]},  # 2 3 msg faults + unknown field
                 {"submit": {"orders": ["A MUN - PAR", "A BER - KIE", "F KIE H"],
                             "commitments": [{"to": "FRANCE", "kind": "move", "unit": "A MUN"}]}},  # 3 illegal + bad sheet
@@ -162,7 +168,7 @@ async def faults() -> None:
                 {"submit": {"orders": ["A MUN - BUR", "A BER - KIE", "F KIE H"],
                             "commitments": [{"to": "FRANCE", "kind": "no_enter", "province": "BUR"}],
                             "notes": "Promised France Burgundy. Took it."}},                  # 5 accepted
-            ][min(k, 5) - 1]
+            ][k - 1]
         if p == "RUSSIA" and k == 1:
             raise ConnectionError("provider unreachable")
         if p == "ITALY":
@@ -196,6 +202,14 @@ async def faults() -> None:
     assert "second order for MUN" in g[4]
     ok("an agent's next turn tells it what was refused")
 
+    assert not any('"type"' in str(e) for _, e in bad), bad
+    ok("the JSON-mode echo models add ('type') is ignored rather than counted against them")
+
+    two = [a for a in storage.actions_for("t-faults", faulty_only=True)
+           if a["kind"] == "response" and "after the JSON object" in str(a["error"])]
+    assert not two
+    ok("nothing in this run needed rescuing from a doubled reply")
+
     subs = [a for a in acts if a["power"] == "GERMANY" and a["kind"] == "submission"]
     assert [s["ok"] for s in subs] == [0, 0, 1]
     ok("a submission with one faulty entry is refused whole; the corrected one is accepted")
@@ -216,6 +230,35 @@ async def faults() -> None:
     v = storage.verdicts_for("t-faults")         # scored as the phase resolved
     assert [(x["verdict"], x["commitment"]["recipient"]) for x in v] == [("BROKEN", "FRANCE")], v
     ok("the sheet is scored against the orders: Germany promised to stay out of Burgundy and moved in")
+
+
+async def keeps_talking() -> None:
+    """The point of the window: a message that lands after you submit still gets read."""
+    seen: dict[str, list[str]] = {}
+    def fn(call: Call):
+        seen.setdefault(call.power, []).append(call.prompt)
+        if call.power == "ENGLAND" and len(seen["ENGLAND"]) == 1:
+            return {"messages": [{"to": "FRANCE", "text": "Channel stays empty?"}], **submit_holds(call)}
+        if call.power == "FRANCE" and "Channel stays empty?" in call.prompt:
+            if "Agreed." in call.prompt:
+                return {}                      # the deal stands; nothing more to do
+            return {"messages": [{"to": "ENGLAND", "text": "Agreed."}],
+                    "submit": {"orders": ["A PAR - BUR"], "commitments":
+                               [{"to": "ENGLAND", "kind": "no_enter", "province": "ENG"}]}}
+        return submit_holds(call)
+
+    f, t, _ = new_table("t-window", fn, phase_seconds=3, min_open=1.5, min_interval=0.05, idle_after=0.3)
+    await t.play_phase()
+    assert any("Channel stays empty?" in p for p in seen["FRANCE"]), "France never saw the message"
+    eng = storage.messages_for("t-window", "ENGLAND")
+    assert [m["text"] for m in eng if m["sender"] == "FRANCE"] == ["Agreed."]
+    assert any("Agreed." in p for p in seen["ENGLAND"]), "England submitted, then never read the reply"
+    ok("a message arriving after both had submitted is still read and answered inside the window")
+
+    sheet = next(c for c in storage.charts_in_phase("t-window", "SPRING 1901 MOVEMENT") if c["power"] == "FRANCE")
+    played = {o["order"] for o in storage.last_result("t-window")["orders"] if o["power"] == "FRANCE"}
+    assert sheet["commitments"] and played == {"A PAR - BUR"}, (sheet, played)
+    ok("a promise made after submitting is on the sheet, because the sheet is the last one handed in")
 
 
 async def slow_and_costly() -> None:
@@ -295,27 +338,27 @@ async def human_game() -> None:
     await wait_for(lambda: main.TABLES[gid].waiting_on() == {"FRANCE"})
     r = await main.submit(gid, main.Orders(power="FRANCE", orders=["A PAR - BUR", "A MAR H"]))
     assert r["submitted"] and r["waitingOn"] == []
-    try:
-        await main.orders(gid, main.Orders(power="FRANCE", orders=["A PAR H"]))
-        raise AssertionError("orders changed after submitting")
-    except HTTPException as e:
-        assert e.status_code in (409, 400)
+    # not final: hand in a different set before the phase closes
+    r2 = await main.submit(gid, main.Orders(power="FRANCE", orders=["A PAR - PIC", "A MAR H"]))
+    assert r2["submitted"]
     await wait_for(lambda: main.get(gid).phase == "FALL 1901 MOVEMENT")
     last = storage.last_result(gid)["orders"]
     played = {o["order"] for o in last}
-    assert {"A PAR - BUR", "A MAR H", "A MUN - RUH"} <= played
+    assert {"A PAR - PIC", "A MAR H", "A MUN - RUH"} <= played and "A PAR - BUR" not in played, played
     assert all(o["order"].endswith(" H") for o in last if o["power"] not in ("FRANCE", "GERMANY"))
-    ok("once everyone has submitted the phase resolves with exactly the orders each player gave")
+    ok("submitting is not final: the orders that stand when the phase closes are the ones played")
 
     # the human now sits out: the clock runs out and the saved orders stand
-    await main.orders(gid, main.Orders(power="FRANCE", orders=["A BUR - PIC"]))
+    s2 = await main.state(gid)
+    saved = next(opts[0] for loc, opts in sorted(s2["legalOrders"].items()) if opts)
+    await main.orders(gid, main.Orders(power="FRANCE", orders=[saved]))
     await wait_for(lambda: main.get(gid).phase != "FALL 1901 MOVEMENT", timeout=6)
-    assert "A BUR - PIC" in {o["order"] for o in storage.last_result(gid)["orders"]}
+    assert saved in {o["order"] for o in storage.last_result(gid)["orders"]}, saved
     ok("if you never press submit, the clock ends the phase and the orders you had saved are played")
 
     h = await main.history(gid)
     assert [x["phase"] for x in h][:2] == ["SPRING 1901 MOVEMENT", "FALL 1901 MOVEMENT"]
-    assert "A PAR - BUR" in {o["order"] for o in h[0]["orders"]} and "A PAR" in h[0]["powers"]["FRANCE"]["units"]
+    assert "A PAR - PIC" in {o["order"] for o in h[0]["orders"]} and "A PAR" in h[0]["powers"]["FRANCE"]["units"]
     ok("history returns every played phase: the board as it stood and the orders given")
 
     try:
@@ -331,6 +374,7 @@ async def human_game() -> None:
 async def run():
     await pacing()
     await clock()
+    await keeps_talking()
     await faults()
     await slow_and_costly()
     await human_game()

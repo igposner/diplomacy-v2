@@ -1,8 +1,15 @@
 """The table agents play at, run like an online game with a clock.
 
 Every phase (movement, retreats, builds and removals alike) is open for at most
-`phase_seconds`. It closes early the moment every player with something to order
-has submitted. Humans and agents are held to the same clock.
+`phase_seconds`, and never closes in its first `min_open` seconds. Once that
+window has passed it closes as soon as every player with something to order has
+submitted. Humans and agents are held to the same clock.
+
+The window exists because a first run without it ended a phase in six seconds:
+every agent wrote its messages and submitted in the same breath, so twenty
+messages went out and not one reply was ever read. Submitting is not final --
+orders may be revised, and messages answered, until the phase closes -- so the
+sheet and orders that stand at the close are the ones that count.
 
 Each agent acts when there is a reason to (the phase opened, a message arrived,
 its last submission was refused, time is nearly up, or it has been quiet for a
@@ -49,27 +56,37 @@ class CostCap(RuntimeError):
     pass
 
 
-def _json(text: str) -> dict:
+# JSON mode makes models echo the format back; it means nothing and is not a fault.
+ECHOED = {"type"}
+
+
+def _json(text: str) -> tuple[dict, str | None]:
+    """The object, and a note if the reply needed rescuing. Models sometimes send
+    two objects in a row; the first one is the answer."""
     t = text.strip()
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", t, re.S)
     if fence:
         t = fence.group(1)
-    data = json.loads(t)
+    data, end = json.JSONDecoder().raw_decode(t)
     if not isinstance(data, dict):
         raise ValueError("the reply was JSON but not an object")
-    return data
+    trailing = t[end:].strip()
+    return data, (f"{len(trailing)} characters after the JSON object were ignored" if trailing else None)
 
 
 class Table:
     def __init__(self, game_id: str, facade: Facade, seats: dict[str, Model], *,
                  resolve: Callable[[], Awaitable[None]], human: str | None = None,
-                 phase_seconds: float = 120, min_interval: float = 5.0, idle_after: float = 20.0,
-                 final_call: float = 25.0, cost_cap_usd: float = 5.0, characters: bool = False):
+                 phase_seconds: float = 120, min_open: float = 45.0, min_interval: float = 5.0,
+                 idle_after: float = 20.0, final_call: float = 25.0, cost_cap_usd: float = 5.0,
+                 characters: bool = False):
         self.game_id, self.f, self.seats, self.human = game_id, facade, seats, human
         self.resolve = resolve
         self.phase_seconds, self.min_interval = phase_seconds, min_interval
+        self.min_open = min(min_open, phase_seconds)
         self.idle_after, self.final_call, self.cost_cap = idle_after, final_call, cost_cap_usd
-        self.briefings = {p: briefing(p, phase_seconds / 60, characters) for p in seats}
+        self.briefings = {p: briefing(p, phase_seconds / 60, characters, self.min_open) for p in seats}
+        self.opened = 0.0
         self.task: asyncio.Task | None = None
         self.phase_done = asyncio.Event()
         self.over_budget = False
@@ -80,6 +97,13 @@ class Table:
 
     def waiting_on(self) -> set[str]:
         return self.must_submit() - storage.submitted(self.game_id, self.f.phase)
+
+    def open_seconds(self) -> float:
+        return time.monotonic() - self.opened
+
+    def closing_now(self) -> bool:
+        """Everyone is in and the negotiation window has passed."""
+        return not self.waiting_on() and self.open_seconds() >= self.min_open
 
     def seconds_left(self) -> float:
         d = storage.deadline(self.game_id)
@@ -106,14 +130,12 @@ class Table:
         phase = self.f.phase
         if storage.deadline(self.game_id) is None:        # a restart keeps the deadline it had
             storage.set_deadline(self.game_id, time.time() + self.phase_seconds)
+        self.opened = time.monotonic()
         self.phase_done = asyncio.Event()
-        if not self.waiting_on():
-            self.phase_done.set()
         agents = [asyncio.create_task(self._agent(p, phase)) for p in self.seats if p != self.human]
-        try:
-            await asyncio.wait_for(self.phase_done.wait(), timeout=self.seconds_left())
-        except asyncio.TimeoutError:
-            pass
+        while self.seconds_left() > 0 and not self.closing_now():
+            await asyncio.sleep(0.1)
+        self.phase_done.set()
         for t in agents:
             t.cancel()
         await asyncio.gather(*agents, return_exceptions=True)
@@ -124,10 +146,9 @@ class Table:
         await self.resolve()
 
     def submitted(self, power: str) -> None:
-        """Called for every accepted submission, human or agent."""
+        """Called for every accepted submission, human or agent. Not final: a
+        later submission in the same phase replaces it."""
         storage.mark_submitted(self.game_id, self.f.phase, power)
-        if not self.waiting_on():
-            self.phase_done.set()
 
     # -------------------------------------------------------------- one agent
     async def _agent(self, power: str, phase: str) -> None:
@@ -138,7 +159,7 @@ class Table:
         feedback: list[str] = []
         warned = False
         first = True
-        while power in self.waiting_on() and self.f.phase == phase:
+        while not self.phase_done.is_set() and self.f.phase == phase:
             now = time.monotonic()
             left = self.seconds_left()
             inbox = [m for m in storage.messages_for(self.game_id, power)
@@ -179,25 +200,27 @@ class Table:
                 storage.log_call(self.game_id, power, phase, "act", model.name, call.prompt, None,
                                  f"{type(e).__name__}: {e}", {})
                 return []
-        if self.f.phase != phase or power not in self.waiting_on():
+        if self.f.phase != phase or self.phase_done.is_set():
             storage.log_call(self.game_id, power, phase, "act", model.name, call.prompt, out.text,
                              "arrived after the phase closed; ignored", out.usage())
             return []
         try:
-            data = _json(out.text)
+            data, rescued = _json(out.text)
         except (ValueError, json.JSONDecodeError) as e:
             storage.log_call(self.game_id, power, phase, "act", model.name, call.prompt, out.text,
                              f"unreadable: {e}", out.usage())
             storage.log_action(self.game_id, power, phase, "response", out.text[:4000], False,
                                f"not a JSON object: {e}")
             return [f"Your reply was not a JSON object ({e}). Reply with only the JSON object."]
-        storage.log_call(self.game_id, power, phase, "act", model.name, call.prompt, out.text, None, out.usage())
+        storage.log_call(self.game_id, power, phase, "act", model.name, call.prompt, out.text, rescued, out.usage())
+        if rescued:
+            storage.log_action(self.game_id, power, phase, "response", out.text[:4000], False, rescued)
         return self._apply(power, phase, data)
 
     # -------------------------------------------------------------- inputs
     def _apply(self, power: str, phase: str, data: dict) -> list[str]:
         feedback: list[str] = []
-        extra = set(data) - {"messages", "submit"}
+        extra = set(data) - {"messages", "submit"} - ECHOED
         if extra:
             storage.log_action(self.game_id, power, phase, "response", data, False,
                                f"unknown fields ignored: {sorted(extra)}")

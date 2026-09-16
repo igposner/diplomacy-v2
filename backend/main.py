@@ -180,13 +180,12 @@ async def history(game_id: str):
 @app.post("/api/games/{game_id}/orders")
 async def orders(game_id: str, body: Orders):
     """Save orders without handing them in. In a timed game this is what stands
-    if the clock runs out before you submit."""
+    if the clock runs out before you submit, and it may be changed after
+    submitting too: the phase plays whatever stands when it closes."""
     f = get(game_id)
     if f.done:
         return _finished(f)
     power = body.power.upper()
-    if table(game_id) and power in storage.submitted(game_id, f.phase):
-        raise HTTPException(409, "your orders for this phase are already submitted")
     bad = f.validate(power, body.orders)
     if bad:
         raise HTTPException(400, {"message": "illegal orders", "orders": bad})
@@ -226,13 +225,13 @@ async def submit(game_id: str, body: Orders):
         raise HTTPException(400, {"message": "illegal orders", "orders": bad})
     t = table(game_id)
     if t:
-        if power in storage.submitted(game_id, f.phase):
-            raise HTTPException(409, "your orders for this phase are already submitted")
+        # Not final: submit again to change them until the phase closes.
         phase = f.phase
         f.submit(power, body.orders)
         storage.save_game(game_id, f.game)
         t.submitted(power)
-        return {"submitted": True, "phase": phase, "waitingOn": sorted(t.waiting_on())}
+        return {"submitted": True, "phase": phase, "waitingOn": sorted(t.waiting_on()),
+                "secondsLeft": round(t.seconds_left(), 1)}
     if body.orders:
         f.submit(power, body.orders)
     loaded = storage.load_game(game_id)

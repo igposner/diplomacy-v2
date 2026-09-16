@@ -36,8 +36,8 @@ async def play(a) -> str:
         played += 1
         print(f"  {f.phase:<26} ${storage.game_cost(gid):.4f}", flush=True)
 
-    timing = dict(phase_seconds=3, min_interval=0.02, idle_after=0.05, final_call=1) if a.fast else \
-        dict(phase_seconds=a.phase_seconds)
+    timing = dict(phase_seconds=3, min_open=0.3, min_interval=0.02, idle_after=0.05, final_call=1) if a.fast else \
+        dict(phase_seconds=a.phase_seconds, min_open=a.min_open)
     t = Table(gid, f, {p: model for p in POWERS}, resolve=resolve, cost_cap_usd=a.cap, **timing)
     while not f.done and played < a.phases:
         await t.play_phase()
@@ -63,6 +63,8 @@ if __name__ == "__main__":
     ap.add_argument("--model", default="dummy")
     ap.add_argument("--phases", type=int, default=1000)
     ap.add_argument("--phase-seconds", type=float, default=120)
+    ap.add_argument("--min-open", type=float, default=45,
+                    help="seconds a phase stays open even once everyone has submitted")
     ap.add_argument("--fast", action="store_true", help="offline testing: a 3 s clock, no pacing")
     ap.add_argument("--cap", type=float, default=5.0, help="stop spending at this many dollars")
     ap.add_argument("--seed", type=int, default=None)
